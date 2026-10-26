@@ -1,0 +1,76 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { FakeDsh } from '../src/dsh.js';
+import { organize, parseDraftJson, type OrganizerDeps } from '../src/organizer.js';
+import { FakeSearch } from '../src/search.js';
+import { Store } from '../src/store.js';
+
+const good = JSON.stringify({ title: '卡片翻转动效', summary: '用 CSS 3D 翻转卡片', keyPoints: ['perspective', 'backface-visibility'], tags: ['css', '动效'], questions: [] });
+let store: Store;
+let search: FakeSearch;
+beforeEach(() => {
+  store = new Store(mkdtempSync(join(tmpdir(), 'org-')));
+  search = new FakeSearch();
+});
+const deps = (dsh: FakeDsh, ocr = async () => ''): OrganizerDeps => ({ store, dsh, search, ocr });
+const mk = (over: Partial<{ text: string; urls: string[] }> = {}) =>
+  store.createRaw({ clientId: Math.random().toString(), text: '', urls: [], images: [], ...over });
+
+describe('parseDraftJson', () => {
+  it('parses plain JSON', () => expect(parseDraftJson('{"a":1}')).toEqual({ a: 1 }));
+  it('strips code fences and surrounding prose', () => {
+    expect(parseDraftJson('好的，结果如下：\n```json\n{"a":{"b":"}"}}\n```\n希望有帮助')).toEqual({ a: { b: '}' } });
+  });
+  it('throws when there is no JSON', () => expect(() => parseDraftJson('抱歉我不能')).toThrow());
+});
+
+describe('organize', () => {
+  it('uses the user description and researches when only a video link is given', async () => {
+    const raw = await mk({ text: 'B站看到的卡片翻转动效', urls: ['https://www.bilibili.com/video/BV1'] });
+    const dsh = new FakeDsh(good);
+    const r = await organize(raw, deps(dsh));
+    expect(r.draft.title).toBe('卡片翻转动效');
+    expect(r.draft.sourceUrls).toEqual(['https://www.bilibili.com/video/BV1']);
+    expect(search.researchCalls.length).toBe(1);
+    expect(dsh.prompts[0]).toContain('B站看到的卡片翻转动效');
+    expect(dsh.prompts[0]).toContain('中文');
+  });
+  it('still drafts and asks a question when the page fetch fails', async () => {
+    const raw = await mk({ text: 'x', urls: ['https://blocked.example/a'] });
+    const r = await organize(raw, deps(new FakeDsh(good)));
+    expect(r.draft.title).toBeTruthy();
+    expect(r.questions.join('')).toContain('https://blocked.example/a');
+  });
+  it('includes fetched page markdown and OCR text in the prompt', async () => {
+    search.pages.set('https://e.com/a', { ok: true, title: 'T', markdown: '# T\n页面正文ABC' });
+    const raw = await store.createRaw({ clientId: 'i', text: '', urls: ['https://e.com/a'], images: [{ name: 'a.png', data: Buffer.from('x') }] });
+    const dsh = new FakeDsh(good);
+    await organize(raw, deps(dsh, async () => '图中文字XYZ'));
+    expect(dsh.prompts[0]).toContain('页面正文ABC');
+    expect(dsh.prompts[0]).toContain('图中文字XYZ');
+    expect((await store.getRaw(raw.id))!.ocrText).toBe('图中文字XYZ');
+  });
+  it('tolerates fenced JSON with prose around it', async () => {
+    const raw = await mk({ text: 'hello world 这是一段足够长的描述文字'.repeat(30) });
+    const r = await organize(raw, deps(new FakeDsh(`说明\n\`\`\`json\n${good}\n\`\`\`\n`)));
+    expect(r.draft.title).toBe('卡片翻转动效');
+  });
+  it('throws when DSH returns no JSON', async () => {
+    const raw = await mk({ text: 'abc'.repeat(200) });
+    await expect(organize(raw, deps(new FakeDsh('我无法回答')))).rejects.toThrow();
+  });
+  it('passes the redo note and existing entries to the prompt', async () => {
+    const raw = await mk({ text: 'abc'.repeat(200) });
+    const dsh = new FakeDsh(good);
+    await organize(raw, deps(dsh), '请更强调实现代码');
+    expect(dsh.prompts[0]).toContain('请更强调实现代码');
+  });
+  it('keeps possibleDuplicateOf from the model', async () => {
+    const raw = await mk({ text: 'abc'.repeat(200) });
+    const withDup = JSON.stringify({ ...JSON.parse(good), possibleDuplicateOf: 'old-1' });
+    const r = await organize(raw, deps(new FakeDsh(withDup)));
+    expect(r.draft.possibleDuplicateOf).toBe('old-1');
+  });
+});
