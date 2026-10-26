@@ -1,0 +1,26 @@
+{
+  "name": "life",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=23"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "hono": "^4.13.14"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^3.2.7"
+  }
+}
