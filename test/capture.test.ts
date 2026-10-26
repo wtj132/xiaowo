@@ -13,7 +13,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'cap-'));
   store = new Store(dir);
   queued = [];
-  app = createApi({ store, enqueue: (id) => queued.push(id) });
+  app = createApi({ store, enqueue: (id) => queued.push(id), redo: () => {} });
 });
 
 function post(fields: Record<string, string | Blob | (string | Blob)[]>) {
