@@ -69,7 +69,7 @@ export function createDshClient(cfg: Config): DshClient {
       const t = turn;
       turn = null;
       if (data?.reason === 'completed') t.resolve([...t.messages.values()].join('\n\n'));
-      else t.reject(new Error(`DSH 回合未完成: ${data?.reason}`));
+      else t.reject(new Error(`DSH 回合未完成: ${typeof data?.reason === 'string' ? data.reason : JSON.stringify(data?.reason)}`));
     }
   }
 

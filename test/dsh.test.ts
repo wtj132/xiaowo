@@ -21,6 +21,10 @@ describe('DshClient', () => {
     client = createDshClient(cfg);
     await expect(client.ask('MAXTOKENS')).rejects.toThrow(/max-tokens/);
   });
+  it('puts a readable message in the error when the end reason is an object', async () => {
+    client = createDshClient(cfg);
+    await expect(client.ask('OBJREASON')).rejects.toThrow(/no api key/);
+  });
   it('restarts after the child process exits', async () => {
     client = createDshClient(cfg);
     await expect(client.ask('EXIT')).rejects.toThrow();
