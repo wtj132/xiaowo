@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { getConnInfo } from '@hono/node-server/conninfo';
 import type { Context, Handler, MiddlewareHandler } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import type { Config } from './config.js';
@@ -24,36 +25,63 @@ function validSession(cfg: Config, value: string | undefined): boolean {
   return safeEqual(sign(cfg, exp), mac);
 }
 
-const clientIp = (c: Context) => c.req.header('x-forwarded-for')?.split(',')[0].trim() || 'local';
+/** 只有在反向代理会覆盖该头时才信任 X-Forwarded-For（TRUST_PROXY=1）；否则用套接字地址。 */
+function clientIp(cfg: Config, c: Context): string {
+  if (cfg.trustProxy) return c.req.header('x-forwarded-for')?.split(',').pop()?.trim() || 'local';
+  try { return getConnInfo(c).remote.address ?? 'local'; } catch { return 'local'; }
+}
 
-/** 仅 /api/* 需要鉴权（登录除外）；静态页面本身不含数据。 */
+class Limiter {
+  private fails = new Map<string, { count: number; since: number }>();
+  blocked(ip: string): boolean {
+    const f = this.fails.get(ip);
+    if (f && Date.now() - f.since > WINDOW_MS) this.fails.delete(ip);
+    return (this.fails.get(ip)?.count ?? 0) >= MAX_FAILS;
+  }
+  fail(ip: string) {
+    const cur = this.fails.get(ip) ?? { count: 0, since: Date.now() };
+    this.fails.set(ip, { count: cur.count + 1, since: cur.since });
+  }
+  clear(ip: string) { this.fails.delete(ip); }
+}
+const limiters = new WeakMap<Config, Limiter>();
+const limiterFor = (cfg: Config) => {
+  let l = limiters.get(cfg);
+  if (!l) limiters.set(cfg, (l = new Limiter()));
+  return l;
+};
+
+/** 路径用 Hono 解码后的 c.req.path，与路由匹配一致，避免 /%61pi 之类绕过。 */
 export function authMiddleware(cfg: Config): MiddlewareHandler {
+  const limiter = limiterFor(cfg);
   return async (c, next) => {
-    const path = new URL(c.req.url).pathname;
+    const path = c.req.path;
     if (!path.startsWith('/api/') || path === '/api/login') return next();
+    const ip = clientIp(cfg, c);
+    if (limiter.blocked(ip)) return c.json({ error: '尝试次数过多，请稍后再试' }, 429);
     const bearer = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
-    if ((bearer && safeEqual(bearer, cfg.apiToken)) || validSession(cfg, getCookie(c, COOKIE))) return next();
+    if (bearer) {
+      if (safeEqual(bearer, cfg.apiToken)) return next();
+      limiter.fail(ip);
+    }
+    if (validSession(cfg, getCookie(c, COOKIE))) return next();
     return c.json({ error: '未登录' }, 401);
   };
 }
 
 export function loginRoute(cfg: Config): Handler {
-  const fails = new Map<string, { count: number; since: number }>();
+  const limiter = limiterFor(cfg);
   return async (c) => {
-    const ip = clientIp(c);
-    const now = Date.now();
-    const f = fails.get(ip);
-    if (f && now - f.since > WINDOW_MS) fails.delete(ip);
-    if ((fails.get(ip)?.count ?? 0) >= MAX_FAILS) return c.json({ error: '尝试次数过多，请稍后再试' }, 429);
+    const ip = clientIp(cfg, c);
+    if (limiter.blocked(ip)) return c.json({ error: '尝试次数过多，请稍后再试' }, 429);
 
-    const body = await c.req.json().catch(() => ({}));
+    const body = (await c.req.json().catch(() => null)) ?? {};
     if (typeof body.password !== 'string' || !safeEqual(body.password, cfg.password)) {
-      const cur = fails.get(ip) ?? { count: 0, since: now };
-      fails.set(ip, { count: cur.count + 1, since: cur.since });
+      limiter.fail(ip);
       return c.json({ error: '口令不对' }, 401);
     }
-    fails.delete(ip);
-    const exp = String(Math.floor(now / 1000) + MAX_AGE_S);
+    limiter.clear(ip);
+    const exp = String(Math.floor(Date.now() / 1000) + MAX_AGE_S);
     const https = new URL(c.req.url).protocol === 'https:' || c.req.header('x-forwarded-proto') === 'https';
     setCookie(c, COOKIE, `${exp}.${sign(cfg, exp)}`, {
       httpOnly: true, sameSite: 'Lax', secure: https, path: '/', maxAge: MAX_AGE_S,

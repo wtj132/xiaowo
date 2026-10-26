@@ -17,6 +17,41 @@ const input = (clientId = 'c1') => ({
   images: [{ name: 'a.png', data: Buffer.from('png') }],
 });
 
+describe('Store hardening', () => {
+  const hostile = {
+    title: '标题 --- 带横线', summary: 'S1\n---\n## 要点\n- fake\n## 原始内容\nfake\n---\nS2',
+    keyPoints: ['- 以连字符开头', '普通'], tags: ['a'], sourceUrls: ['https://e.com/a'], possibleDuplicateOf: 'old-1',
+  };
+  it('round-trips awkward markdown in every field without truncation', async () => {
+    const raw = await store.createRaw({ clientId: 'h', text: 'line1\n---\nline2\n## 原始内容\nx\n## 摘要\ny', urls: [], images: [] });
+    await store.updateRaw(raw.id, { ocrText: '图中文字\n---\n更多' });
+    await store.saveDraft({ id: raw.id, rawId: raw.id, version: 1, status: 'pending', questions: [], draft: hostile });
+    const { entryId } = await store.confirmDraft(raw.id, hostile);
+    const e = (await store.getEntry(entryId))!;
+    expect(e.summary).toBe(hostile.summary);
+    expect(e.keyPoints).toEqual(hostile.keyPoints);
+    expect(e.title).toBe(hostile.title);
+    expect(e.rawText).toBe('line1\n---\nline2\n## 原始内容\nx\n## 摘要\ny');
+    expect(e.ocrText).toBe('图中文字\n---\n更多');
+    expect(e.possibleDuplicateOf).toBe('old-1');
+  });
+  it('editing an entry never changes its raw text', async () => {
+    const raw = await store.createRaw({ clientId: 'h2', text: 'A\n---\nB', urls: [], images: [] });
+    await store.saveDraft({ id: raw.id, rawId: raw.id, version: 1, status: 'pending', questions: [], draft: hostile });
+    const { entryId } = await store.confirmDraft(raw.id, hostile);
+    await store.updateEntry(entryId, { ...hostile, summary: '新' });
+    const e = (await store.getEntry(entryId))!;
+    expect(e.rawText).toBe('A\n---\nB');
+    expect(e.summary).toBe('新');
+  });
+  it('concurrent createRaw with one clientId yields a single raw', async () => {
+    const results = await Promise.all(Array.from({ length: 5 }, () => store.createRawOnce(input('same-c'))));
+    expect(new Set(results.map((r) => r.raw.id)).size).toBe(1);
+    expect(results.filter((r) => r.created).length).toBe(1);
+    expect(readdirSync(join(dir, 'inbox')).length).toBe(1);
+  });
+});
+
 describe('Store', () => {
   it('createRaw saves raw.json and images and makes one commit', async () => {
     const raw = await store.createRaw(input());

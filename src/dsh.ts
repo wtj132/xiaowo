@@ -14,7 +14,8 @@ export interface DshClient {
 const PROVIDER = process.env.DSH_PROVIDER ?? 'deepseek-official';
 const MODEL = process.env.DSH_MODEL ?? 'deepseek-v4-pro';
 const PROFILE = process.env.DSH_SDK_PROFILE ?? 'sdk-minimal';
-const INHERITED = ['DSH_PROFILE', 'DSH_PROFILE_DIR', 'DSH_SESSION_ID', 'DSH_WEB_URL'];
+/** agent 子进程只拿到这些环境变量，站点口令、API token 等绝不透传。 */
+const ENV_WHITELIST = ['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TMPDIR', 'SHELL', 'TERM', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY'];
 
 /** 环境变量优先，其次已登录的 DSH 凭据；只注入子进程，不写日志。 */
 function resolveApiKey(): string | undefined {
@@ -87,39 +88,54 @@ export function createDshClient(cfg: Config): DshClient {
     mkdirSync(home, { recursive: true });
     mkdirSync(workspace, { recursive: true });
     const key = resolveApiKey();
-    const env: NodeJS.ProcessEnv = { ...process.env, DSH_HOME: home, ...(key ? { DEEPSEEK_API_KEY: key } : {}) };
-    for (const k of INHERITED) delete env[k];
+    const env: NodeJS.ProcessEnv = {
+      ...Object.fromEntries(ENV_WHITELIST.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])),
+      DSH_HOME: home,
+      ...(key ? { DEEPSEEK_API_KEY: key } : {}),
+    };
 
     const proc = spawn(cfg.dshBin, ['--profile', PROFILE], { cwd: workspace, env, stdio: ['pipe', 'pipe', 'pipe'] });
     child = proc;
     proc.stderr.on('data', () => undefined);
     proc.stdin.on('error', () => undefined);
-    proc.on('error', (e) => { child = null; ready = null; failAll(e); });
+    proc.on('error', (e) => { if (child === proc) { child = null; ready = null; failAll(e); } });
     proc.on('exit', (code) => {
-      if (child === proc) { child = null; ready = null; }
-      failAll(new Error(`dsh 进程退出 (code ${code})`));
+      // 已被超时流程替换掉的旧进程退出时，不能连累新进程的请求
+      if (child === proc) { child = null; ready = null; failAll(new Error(`dsh 进程退出 (code ${code})`)); }
     });
-    readline.createInterface({ input: proc.stdout }).on('line', onFrame);
+    readline.createInterface({ input: proc.stdout }).on('line', (line) => { if (child === proc) onFrame(line); });
 
     ready = request('initialize', { provider: PROVIDER, model: MODEL, cwd: workspace });
     ready.catch(() => { ready = null; });
     return ready;
   }
 
+  /** 超时后杀掉子进程：旧回合的迟到事件不会串到下一次请求，卡死的进程也不会堵住队列。 */
+  function abort(reason: Error) {
+    const c = child;
+    child = null;
+    ready = null;
+    failAll(reason);
+    c?.kill('SIGKILL');
+  }
+
   async function runAsk(prompt: string, timeoutMs: number): Promise<string> {
-    await start();
-    const done = new Promise<string>((resolveFn, reject) => {
-      turn = { messages: new Map(), resolve: resolveFn, reject };
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { const e = new Error(`DSH 超时 (${timeoutMs}ms)`); abort(e); reject(e); }, timeoutMs);
     });
-    done.catch(() => undefined);
-    const timer = setTimeout(() => {
-      const t = turn;
-      turn = null;
-      t?.reject(new Error(`DSH 超时 (${timeoutMs}ms)`));
-    }, timeoutMs);
-    try {
+    const attempt = (async () => {
+      await start();
+      const done = new Promise<string>((resolveFn, reject) => {
+        turn = { messages: new Map(), resolve: resolveFn, reject };
+      });
+      done.catch(() => undefined);
       await request('session/prompt', { sessionId: randomUUID(), contentBlocks: [{ type: 'text', text: prompt }] });
-      return await done;
+      return done;
+    })();
+    attempt.catch(() => undefined);
+    try {
+      return await Promise.race([attempt, timeout]);
     } finally {
       clearTimeout(timer);
       turn = null;

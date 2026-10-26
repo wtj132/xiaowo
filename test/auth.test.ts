@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { authMiddleware, loginRoute } from '../src/auth.js';
 import type { Config } from '../src/config.js';
 
-const cfg = { password: 'secret-pw', apiToken: 'tok123' } as Config;
+const cfg = { password: 'secret-pw', apiToken: 'tok123', trustProxy: true } as Config;
 function app() {
   const a = new Hono();
   a.use('*', authMiddleware(cfg));
@@ -43,6 +43,19 @@ describe('auth', () => {
   it('accepts the bearer token', async () => {
     const res = await app().request('/api/capture', { method: 'POST', headers: { authorization: 'Bearer tok123' } });
     expect(res.status).toBe(200);
+  });
+  it('does not let a percent-encoded /api path skip auth', async () => {
+    const a = app();
+    for (const p of ['/%61pi/inbox', '/%61pi/capture']) {
+      const res = await a.request(p, { method: p.endsWith('capture') ? 'POST' : 'GET' });
+      expect([401, 404]).toContain(res.status);
+    }
+  });
+  it('rate limits wrong bearer tokens too', async () => {
+    const a = app();
+    for (let i = 0; i < 10; i++) await a.request('/api/inbox', { headers: { authorization: 'Bearer wrong', 'x-forwarded-for': '7.7.7.7' } });
+    const res = await a.request('/api/inbox', { headers: { authorization: 'Bearer tok123', 'x-forwarded-for': '7.7.7.7' } });
+    expect(res.status).toBe(429);
   });
   it('lets the manifest through without auth', async () => {
     expect((await app().request('/manifest.webmanifest')).status).toBe(200);

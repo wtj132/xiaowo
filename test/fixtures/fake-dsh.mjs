@@ -6,7 +6,7 @@ let inited = false;
 const send = (o) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...o }) + '\n');
 const event = (type, data) => send({ method: 'session.event', params: { event: { type, data } } });
 
-readline.createInterface({ input: process.stdin }).on('line', (line) => {
+readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   const msg = JSON.parse(line);
   if (msg.method === 'initialize') {
     inited = true;
@@ -20,14 +20,23 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (!inited) return send({ id: msg.id, error: { message: 'not initialized' } });
 
   const prompt = msg.params.contentBlocks[0].text;
+  if (prompt.includes('NOREPLY')) return;
   send({ id: msg.id, result: { messageId: 'm1' } });
+  if (prompt.includes('LATE')) {
+    setTimeout(() => {
+      event('assistant/message', { turn: 1, step: 1, message: { id: 'late', content: [{ type: 'text', text: '过期的回答' }] } });
+      event('turn/end', { turn: 1, reason: 'completed' });
+    }, 500);
+    return;
+  }
   if (prompt.includes('EXIT')) process.exit(1);
   if (prompt.includes('HANG')) return;
+  if (prompt.includes('SLOW')) await new Promise((r) => setTimeout(r, 800));
 
   event('turn/start', { turn: 1 });
   event('assistant/message', { turn: 1, step: 1, message: { id: 'a1', content: [{ type: 'tool_call', name: 'shell' }] } });
   const answer = prompt.includes('ENV')
-    ? JSON.stringify({ DSH_PROFILE: process.env.DSH_PROFILE ?? null, DSH_WEB_URL: process.env.DSH_WEB_URL ?? null, DSH_HOME: process.env.DSH_HOME, KEY: process.env.DEEPSEEK_API_KEY ?? null })
+    ? JSON.stringify({ DSH_PROFILE: process.env.DSH_PROFILE ?? null, DSH_WEB_URL: process.env.DSH_WEB_URL ?? null, DSH_HOME: process.env.DSH_HOME, APP_PASSWORD: process.env.APP_PASSWORD ?? null, API_TOKEN: process.env.API_TOKEN ?? null, DATA_DIR: process.env.DATA_DIR ?? null, KEY: process.env.DEEPSEEK_API_KEY ?? null })
     : `回答:${prompt}`;
   event('assistant/message', {
     turn: 1, step: 2,

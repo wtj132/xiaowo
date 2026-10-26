@@ -55,6 +55,44 @@ describe('Queue', () => {
     expect((await store.getDraft(raw.id))!.version).toBe(2);
     expect(dsh.prompts[1]).toContain('多讲一点原理');
   });
+  it('does not reprocess confirmed or discarded raws', async () => {
+    const raw = await store.createRaw({ clientId: 'a', ...body });
+    const dsh = new FakeDsh(good);
+    const q = new Queue(mkDeps(dsh));
+    q.enqueue(raw.id); await q.onIdle();
+    await store.confirmDraft(raw.id, JSON.parse(good) && { title: 'T', summary: 'S', keyPoints: [], tags: [], sourceUrls: [] });
+    q.enqueue(raw.id); await q.onIdle();
+    expect(dsh.prompts.length).toBe(1);
+    expect((await store.getRaw(raw.id))!.status).toBe('confirmed');
+  });
+  it('a failed redo keeps the previous draft usable', async () => {
+    const raw = await store.createRaw({ clientId: 'a', ...body });
+    let calls = 0;
+    const dsh = new FakeDsh(() => (++calls === 1 ? good : '不是JSON'));
+    const q = new Queue(mkDeps(dsh));
+    q.enqueue(raw.id); await q.onIdle();
+    q.redo(raw.id, '再来'); await q.onIdle();
+    const d = (await store.getDraft(raw.id))!;
+    expect(d.status).toBe('pending');
+    expect(d.draft!.title).toBe('T');
+    expect(d.error).toBeTruthy();
+    expect((await store.getRaw(raw.id))!.status).toBe('drafted');
+  });
+  it('a result finishing after the user confirmed does not overwrite the entry state', async () => {
+    const raw = await store.createRaw({ clientId: 'a', ...body });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    const dsh = new FakeDsh(async () => { if (++calls === 1) return good; await gate; return good; });
+    const q = new Queue(mkDeps(dsh));
+    q.enqueue(raw.id); await q.onIdle();
+    q.redo(raw.id, '重做');
+    await new Promise((r) => setTimeout(r, 100));
+    await store.confirmDraft(raw.id, { title: 'T', summary: 'S', keyPoints: [], tags: [], sourceUrls: [] });
+    release(); await q.onIdle();
+    expect((await store.getRaw(raw.id))!.status).toBe('confirmed');
+    expect((await store.getDraft(raw.id))!.status).toBe('confirmed');
+  });
   it('recover re-queues material stuck in organizing or saved', async () => {
     const a = await store.createRaw({ clientId: 'a', ...body });
     await store.updateRaw(a.id, { status: 'organizing' });

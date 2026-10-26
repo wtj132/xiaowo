@@ -160,6 +160,7 @@ async function renderDraft(id) {
   }
 
   const form = draftForm(rec.draft);
+  if (rec.error) parts.push(h('p', { class: 'hint' }, `上次重做没成功（${rec.error}），下面还是上一版草稿。`));
   if (rec.draft.possibleDuplicateOf) parts.push(h('p', { class: 'hint' }, '可能和已有条目重复：', h('a', { href: `#/entry/${rec.draft.possibleDuplicateOf}` }, '去看看')));
   if (rec.questions.length) {
     const answer = h('textarea', { class: 'field', rows: 3, placeholder: '一句话回答就行', 'aria-label': '回答助手的问题' });

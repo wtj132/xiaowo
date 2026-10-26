@@ -19,7 +19,7 @@ export interface DraftRecord {
   id: string; rawId: string; version: number; draft: Draft | null;
   questions: string[]; status: 'pending' | 'confirmed' | 'discarded' | 'failed'; error?: string;
 }
-export interface Entry extends Draft { id: string; rawId: string; createdAt: string; rawText: string }
+export interface Entry extends Draft { id: string; rawId: string; createdAt: string; rawText: string; ocrText?: string }
 
 export interface RawInput {
   clientId: string; text: string; urls: string[];
@@ -28,6 +28,9 @@ export interface RawInput {
 
 const exists = (p: string) => fs.access(p).then(() => true, () => false);
 const oneLine = (s: string) => s.replace(/\s*\n\s*/g, ' ').trim();
+const SECTIONS = { summary: '摘要', points: '要点', raw: '原始内容', ocr: '图片文字' } as const;
+type SectionName = keyof typeof SECTIONS;
+const marker = (name: SectionName) => `<!--life:${name}-->\n## ${SECTIONS[name]}\n`;
 
 export class Store {
   private chain: Promise<unknown> = Promise.resolve();
@@ -67,15 +70,19 @@ export class Store {
   }
   private newId() {
     const d = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-    return `${d}-${randomBytes(2).toString('hex')}`;
+    return `${d}-${randomBytes(4).toString('hex')}`;
   }
 
   async createRaw(input: RawInput): Promise<Raw> {
-    await this.ready;
-    const existing = (await this.listRaw()).find((r) => r.clientId === input.clientId);
-    if (existing) return existing;
-    const id = this.newId();
-    return this.write(`收件: ${id}`, async () => {
+    return (await this.createRawOnce(input)).raw;
+  }
+
+  /** 查重与创建在同一个串行写入里完成：相同 clientId 并发提交也只会产生一份。 */
+  async createRawOnce(input: RawInput): Promise<{ raw: Raw; created: boolean }> {
+    return this.write(`收件`, async () => {
+      const existing = (await this.listRaw()).find((r) => r.clientId === input.clientId);
+      if (existing) return { raw: existing, created: false };
+      const id = this.newId();
       const dir = this.p('inbox', id);
       await fs.mkdir(dir, { recursive: true });
       const images: string[] = [];
@@ -89,7 +96,7 @@ export class Store {
         text: input.text, urls: input.urls, images, status: 'saved',
       };
       await fs.writeFile(join(dir, 'raw.json'), JSON.stringify(raw, null, 2));
-      return raw;
+      return { raw, created: true };
     });
   }
 
@@ -136,32 +143,38 @@ export class Store {
       `sources: ${JSON.stringify(e.sourceUrls)}`,
       `createdAt: ${e.createdAt}`,
       `rawId: ${e.rawId}`,
+      ...(e.possibleDuplicateOf ? [`duplicateOf: ${oneLine(e.possibleDuplicateOf)}`] : []),
       '---',
       '',
-      '## 摘要',
-      e.summary,
-      '',
-      '## 要点',
-      ...e.keyPoints.map((k) => `- ${oneLine(k)}`),
-      '',
-      '## 原始内容',
-      e.rawText,
+      `${marker('summary')}${e.summary}`,
+      `${marker('points')}${e.keyPoints.map((k) => `- ${oneLine(k)}`).join('\n')}`,
+      `${marker('raw')}${e.rawText}`,
+      `${marker('ocr')}${e.ocrText ?? ''}`,
       '',
     ].join('\n');
   }
 
+  /** 章节用不可见的注释标记切分，正文里出现 ---、## 标题都不会影响解析。 */
   private parseEntry(id: string, md: string): Entry {
-    const [, front, body] = md.split(/^---\n|\n---\n/);
-    const meta = Object.fromEntries(front.split('\n').map((l) => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 2)]));
-    const rawIdx = body.indexOf('## 原始内容\n');
-    const head = body.slice(0, rawIdx);
-    const rawText = body.slice(rawIdx + '## 原始内容\n'.length).replace(/\n$/, '');
-    const [, summaryPart, pointsPart] = head.split(/## 摘要\n|\n## 要点\n/);
+    const end = md.indexOf('\n---\n', 4);
+    const meta = Object.fromEntries(md.slice(4, end).split('\n').map((l) => [l.slice(0, l.indexOf(':')), l.slice(l.indexOf(':') + 2)]));
+    const body = md.slice(end + 5).replace(/^\n/, '');
+    const at = (name: SectionName, from: number) => body.indexOf(marker(name), from);
+    const sStart = at('summary', 0);
+    const pStart = body.indexOf(`\n${marker('points')}`, sStart);
+    const rStart = body.indexOf(`\n${marker('raw')}`, pStart);
+    const oStart = body.lastIndexOf(`\n${marker('ocr')}`);
+    const slice = (from: number, mark: SectionName, to: number) => body.slice(from + (from === sStart ? 0 : 1) + marker(mark).length, to);
+    const summary = slice(sStart, 'summary', pStart);
+    const points = slice(pStart, 'points', rStart);
+    const rawText = slice(rStart, 'raw', oStart);
+    const ocr = body.slice(oStart + 1 + marker('ocr').length).replace(/\n$/, '');
     return {
       id, title: meta.title, tags: JSON.parse(meta.tags), sourceUrls: JSON.parse(meta.sources),
-      createdAt: meta.createdAt, rawId: meta.rawId, summary: (summaryPart ?? '').replace(/\n+$/, ''),
-      keyPoints: (pointsPart ?? '').split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2)),
-      rawText,
+      createdAt: meta.createdAt, rawId: meta.rawId, summary,
+      keyPoints: points.split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2)),
+      rawText, ...(ocr ? { ocrText: ocr } : {}),
+      ...(meta.duplicateOf ? { possibleDuplicateOf: meta.duplicateOf } : {}),
     };
   }
 
@@ -170,7 +183,7 @@ export class Store {
       const rec = await this.getDraft(draftId);
       const raw = rec && (await this.getRaw(rec.rawId));
       if (!rec || !raw) throw new Error(`草稿不存在: ${draftId}`);
-      const entry: Entry = { ...edited, id: draftId, rawId: raw.id, createdAt: new Date().toISOString(), rawText: raw.text };
+      const entry: Entry = { ...edited, id: draftId, rawId: raw.id, createdAt: new Date().toISOString(), rawText: raw.text, ocrText: raw.ocrText };
       await fs.mkdir(this.p('entries'), { recursive: true });
       await fs.writeFile(this.p('entries', `${entry.id}.md`), this.renderEntry(entry));
       await fs.writeFile(this.p('drafts', `${draftId}.json`), JSON.stringify({ ...rec, status: 'confirmed' }, null, 2));
@@ -194,7 +207,8 @@ export class Store {
     return this.write(`编辑条目: ${id}`, async () => {
       const cur = await this.getEntry(id);
       if (!cur) throw new Error(`条目不存在: ${id}`);
-      const next: Entry = { ...cur, ...edited };
+      const raw = await this.getRaw(cur.rawId);
+      const next: Entry = { ...cur, ...edited, rawText: raw?.text ?? cur.rawText, ocrText: raw?.ocrText ?? cur.ocrText };
       await fs.writeFile(this.p('entries', `${id}.md`), this.renderEntry(next));
       return next;
     });

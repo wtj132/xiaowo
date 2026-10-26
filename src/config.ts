@@ -8,6 +8,7 @@ export interface Config {
   dshWorkspace: string;
   searchCmd: string[];
   tesseractLangs: string;
+  trustProxy: boolean;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -27,5 +28,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     dshWorkspace: env.DSH_WORKSPACE ?? '.dsh/workspace',
     searchCmd: (env.SEARCH_CMD ?? 'uvx free-search-mcp').split(' ').filter(Boolean),
     tesseractLangs: env.TESSERACT_LANGS ?? 'chi_sim+eng',
+    trustProxy: env.TRUST_PROXY === '1',
   };
 }
