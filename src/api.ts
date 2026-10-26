@@ -125,7 +125,9 @@ export function createApi(deps: ApiDeps) {
 
   api.get('/api/entries/:id', async (c) => {
     const entry = ID_RE.test(c.req.param('id')) ? await store.getEntry(c.req.param('id')) : null;
-    return entry ? c.json({ entry }) : c.json({ error: '条目不存在' }, 404);
+    if (!entry) return c.json({ error: '条目不存在' }, 404);
+    const raw = await store.getRaw(entry.rawId);
+    return c.json({ entry, images: raw?.images ?? [] });
   });
 
   api.put('/api/entries/:id', async (c) => {

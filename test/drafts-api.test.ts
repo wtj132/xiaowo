@@ -67,6 +67,11 @@ describe('draft & entry API', () => {
     expect((await json(`/api/entries/${entryId}`, 'PUT', { draft: { ...draft, summary: '新摘要' } })).status).toBe(200);
     expect((await (await app.request(`/api/entries/${entryId}`)).json()).entry.summary).toBe('新摘要');
   });
+  it('entry detail includes the original image names', async () => {
+    const { entryId } = await (await json(`/api/drafts/${rawId}/confirm`, 'POST', { draft })).json();
+    const body = await (await app.request(`/api/entries/${entryId}`)).json();
+    expect(body.images).toEqual(['img-0.png']);
+  });
   it('serves a stored image', async () => {
     const res = await app.request(`/api/files/${rawId}/img-0.png`);
     expect(res.status).toBe(200);
