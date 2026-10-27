@@ -25,6 +25,10 @@ describe('DshClient', () => {
     client = createDshClient(cfg);
     await expect(client.ask('OBJREASON')).rejects.toThrow(/no api key/);
   });
+  it('treats an object end reason with kind completed as success', async () => {
+    client = createDshClient(cfg);
+    expect(await client.ask('OBJOK')).toBe('回答:OBJOK');
+  });
   it('restarts after the child process exits', async () => {
     client = createDshClient(cfg);
     await expect(client.ask('EXIT')).rejects.toThrow();

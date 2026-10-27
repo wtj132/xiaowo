@@ -42,5 +42,5 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
     turn: 1, step: 2,
     message: { id: 'a2', content: [{ type: 'reasoning', text: '思考中' }, { type: 'text', text: answer }] },
   });
-  event('turn/end', { turn: 1, reason: prompt.includes('OBJREASON') ? { kind: 'error', message: 'no api key' } : prompt.includes('MAXTOKENS') ? 'max-tokens' : 'completed' });
+  event('turn/end', { turn: 1, reason: prompt.includes('OBJREASON') ? { kind: 'error', message: 'no api key' } : prompt.includes('MAXTOKENS') ? 'max-tokens' : prompt.includes('OBJOK') ? { kind: 'completed' } : 'completed' });
 });
