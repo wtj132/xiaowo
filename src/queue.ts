@@ -1,4 +1,4 @@
-import { organize, type OrganizerDeps } from './organizer.js';
+import { localDraft, organize, type OrganizerDeps } from './organizer.js';
 
 const FINISHED = ['confirmed', 'discarded'];
 
@@ -52,7 +52,7 @@ export class Queue {
 
     const userFinished = async () => FINISHED.includes((await store.getRaw(rawId))?.status ?? '');
     try {
-      const { draft, questions } = await organize(raw, this.deps, note);
+      const { draft, questions } = await (raw.private ? localDraft(raw, this.deps) : organize(raw, this.deps, note));
       if (await userFinished()) return; // 整理期间用户已确认/丢弃，不能覆盖
       await store.saveDraft({ id: rawId, rawId, version, draft, questions, status: 'pending' });
       await store.updateRaw(rawId, { status: 'drafted' });

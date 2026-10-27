@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { bodyLimit } from 'hono/body-limit';
-import type { Draft, Store } from './store.js';
+import { RevConflict, type Draft, type Store } from './store.js';
+import { parseTripImport, summarize } from './trips.js';
 
 export interface ApiDeps {
   store: Store;
@@ -14,6 +15,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_BODY_BYTES = 30 * 1024 * 1024;
 const MAX_IMAGES = 9;
 const MAX_TEXT_CHARS = 20000;
+const MAX_TRIP_BYTES = 5 * 1024 * 1024;
 const URL_RE = /https?:\/\/[^\s<>"'，。）)]+/g;
 const ID_RE = /^[\w-]+$/;
 const FILE_RE = /^img-\d+\.(png|jpg|webp|heic)$/;
@@ -73,7 +75,8 @@ export function createApi(deps: ApiDeps) {
 
     if (!text && urls.length === 0 && images.length === 0) return c.json({ error: '内容不能为空' }, 400);
 
-    const { raw, created } = await store.createRawOnce({ clientId, text, urls, images });
+    const isPrivate = body.private === true || body.private === 'true' || body.private === '1';
+    const { raw, created } = await store.createRawOnce({ clientId, text, urls, images, private: isPrivate });
     if (!created) return c.json({ id: raw.id, status: raw.status }, 200);
     enqueue(raw.id);
     return c.json({ id: raw.id, status: raw.status }, 201);
@@ -116,6 +119,7 @@ export function createApi(deps: ApiDeps) {
     const id = c.req.param('id');
     const rec = ID_RE.test(id) ? await store.getDraft(id) : null;
     if (!rec || rec.status === 'confirmed' || rec.status === 'discarded') return c.json({ error: '草稿不存在或已处理' }, 404);
+    if ((await store.getRaw(rec.rawId))?.private) return c.json({ error: '私密条目不会交给助手' }, 409);
     const text = String((await c.req.json().catch(() => ({})))[field] ?? '').trim();
     if (!text) return c.json({ error: '内容不能为空' }, 400);
     redo(id, field === 'answers' ? `用户对你提出的问题的回答：${text}` : text);
@@ -159,6 +163,47 @@ export function createApi(deps: ApiDeps) {
     } catch {
       return c.json({ error: '文件不存在' }, 404);
     }
+  });
+
+  // ---------------------------------------------------------------- 旅程
+  const tripLimit = bodyLimit({ maxSize: MAX_TRIP_BYTES, onError: (c) => c.json({ error: '旅程数据太大了（最多 5MB）' }, 413) });
+
+  api.get('/api/trips', async (c) => {
+    const trips = (await store.listTrips()).map(summarize).sort((a, b) => b.start.localeCompare(a.start));
+    return c.json({ trips });
+  });
+
+  api.post('/api/trips', tripLimit, async (c) => {
+    const data = parseTripImport(await c.req.json().catch(() => null));
+    if (!data) return c.json({ error: '不是旅程数据（需要 nordic-trip 导出的 JSON）' }, 400);
+    const rec = await store.createTrip(data);
+    return c.json({ trip: rec, summary: summarize(rec) }, 201);
+  });
+
+  api.get('/api/trips/:id', async (c) => {
+    const rec = ID_RE.test(c.req.param('id')) ? await store.getTrip(c.req.param('id')) : null;
+    return rec ? c.json({ trip: rec }) : c.json({ error: '旅程不存在' }, 404);
+  });
+
+  api.put('/api/trips/:id', tripLimit, async (c) => {
+    const id = c.req.param('id');
+    if (!ID_RE.test(id) || !(await store.getTrip(id))) return c.json({ error: '旅程不存在' }, 404);
+    const body = await c.req.json().catch(() => null);
+    const data = parseTripImport(body?.data);
+    if (!data || !Number.isInteger(body?.rev)) return c.json({ error: '需要 data 和 rev' }, 400);
+    try {
+      return c.json({ trip: await store.saveTrip(id, data, body.rev) });
+    } catch (e) {
+      if (e instanceof RevConflict) return c.json({ error: e.message, trip: e.current }, 409);
+      throw e;
+    }
+  });
+
+  api.delete('/api/trips/:id', async (c) => {
+    const id = c.req.param('id');
+    if (!ID_RE.test(id) || !(await store.getTrip(id))) return c.json({ error: '旅程不存在' }, 404);
+    await store.deleteTrip(id);
+    return c.json({ ok: true });
   });
 
   return api;

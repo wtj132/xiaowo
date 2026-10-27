@@ -4,12 +4,20 @@ import { promises as fs } from 'node:fs';
 import { extname, join } from 'node:path';
 import { promisify } from 'node:util';
 
+import type { TripData, TripRecord } from './trips.js';
+
 const sh = promisify(execFile);
+
+export class RevConflict extends Error {
+  constructor(readonly current: TripRecord) { super('旅程已在别处修改'); }
+}
 
 export type RawStatus = 'saved' | 'organizing' | 'drafted' | 'failed' | 'confirmed' | 'discarded';
 export interface Raw {
   id: string; clientId: string; createdAt: string; text: string; urls: string[];
   images: string[]; status: RawStatus; ocrText?: string;
+  /** 私密：不发给助手整理，文件不进 git（因此也不进 GitHub 备份） */
+  private?: boolean;
 }
 export interface Draft {
   title: string; summary: string; keyPoints: string[]; tags: string[];
@@ -19,11 +27,12 @@ export interface DraftRecord {
   id: string; rawId: string; version: number; draft: Draft | null;
   questions: string[]; status: 'pending' | 'confirmed' | 'discarded' | 'failed'; error?: string;
 }
-export interface Entry extends Draft { id: string; rawId: string; createdAt: string; rawText: string; ocrText?: string }
+export interface Entry extends Draft { id: string; rawId: string; createdAt: string; rawText: string; ocrText?: string; private?: boolean }
 
 export interface RawInput {
   clientId: string; text: string; urls: string[];
   images: { name: string; data: Buffer }[];
+  private?: boolean;
 }
 
 const exists = (p: string) => fs.access(p).then(() => true, () => false);
@@ -64,6 +73,13 @@ export class Store {
     return next;
   }
 
+  /** 原料、草稿、条目共用同一个 id；写进 .git/info/exclude（不随仓库提交），git 永远看不到这些文件。 */
+  private async excludeFromGit(id: string) {
+    const file = this.p('.git', 'info', 'exclude');
+    await fs.mkdir(this.p('.git', 'info'), { recursive: true });
+    await fs.appendFile(file, `\n/inbox/${id}/\n/drafts/${id}.json\n/entries/${id}.md\n`);
+  }
+
   private p(...parts: string[]) { return join(this.dataDir, ...parts); }
   private async readJson<T>(path: string): Promise<T | null> {
     try { return JSON.parse(await fs.readFile(path, 'utf8')) as T; } catch { return null; }
@@ -83,6 +99,7 @@ export class Store {
       const existing = (await this.listRaw()).find((r) => r.clientId === input.clientId);
       if (existing) return { raw: existing, created: false };
       const id = this.newId();
+      if (input.private) await this.excludeFromGit(id);
       const dir = this.p('inbox', id);
       await fs.mkdir(dir, { recursive: true });
       const images: string[] = [];
@@ -94,6 +111,7 @@ export class Store {
       const raw: Raw = {
         id, clientId: input.clientId, createdAt: new Date().toISOString(),
         text: input.text, urls: input.urls, images, status: 'saved',
+        ...(input.private ? { private: true } : {}),
       };
       await fs.writeFile(join(dir, 'raw.json'), JSON.stringify(raw, null, 2));
       return { raw, created: true };
@@ -143,6 +161,7 @@ export class Store {
       `sources: ${JSON.stringify(e.sourceUrls)}`,
       `createdAt: ${e.createdAt}`,
       `rawId: ${e.rawId}`,
+      ...(e.private ? ['private: true'] : []),
       ...(e.possibleDuplicateOf ? [`duplicateOf: ${oneLine(e.possibleDuplicateOf)}`] : []),
       '---',
       '',
@@ -175,6 +194,7 @@ export class Store {
       keyPoints: points.split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2)),
       rawText, ...(ocr ? { ocrText: ocr } : {}),
       ...(meta.duplicateOf ? { possibleDuplicateOf: meta.duplicateOf } : {}),
+      ...(meta.private === 'true' ? { private: true } : {}),
     };
   }
 
@@ -183,7 +203,7 @@ export class Store {
       const rec = await this.getDraft(draftId);
       const raw = rec && (await this.getRaw(rec.rawId));
       if (!rec || !raw) throw new Error(`草稿不存在: ${draftId}`);
-      const entry: Entry = { ...edited, id: draftId, rawId: raw.id, createdAt: new Date().toISOString(), rawText: raw.text, ocrText: raw.ocrText };
+      const entry: Entry = { ...edited, id: draftId, rawId: raw.id, createdAt: new Date().toISOString(), rawText: raw.text, ocrText: raw.ocrText, ...(raw.private ? { private: true } : {}) };
       await fs.mkdir(this.p('entries'), { recursive: true });
       await fs.writeFile(this.p('entries', `${entry.id}.md`), this.renderEntry(entry));
       await fs.writeFile(this.p('drafts', `${draftId}.json`), JSON.stringify({ ...rec, status: 'confirmed' }, null, 2));
@@ -221,5 +241,41 @@ export class Store {
       const raw = await this.getRaw(draftId);
       if (raw) await fs.writeFile(this.p('inbox', raw.id, 'raw.json'), JSON.stringify({ ...raw, status: 'discarded' }, null, 2));
     });
+  }
+
+  // ---------------------------------------------------------------- 旅程
+  getTrip(id: string) { return this.readJson<TripRecord>(this.p('trips', `${id}.json`)); }
+
+  async listTrips(): Promise<TripRecord[]> {
+    await this.ready;
+    const files = await fs.readdir(this.p('trips')).catch(() => [] as string[]);
+    const all = await Promise.all(files.filter((f) => f.endsWith('.json')).map((f) => this.getTrip(f.slice(0, -5))));
+    return all.filter((t): t is TripRecord => !!t);
+  }
+
+  async createTrip(data: TripData): Promise<TripRecord> {
+    const name = typeof data.name === 'string' ? oneLine(data.name).slice(0, 40) : '旅程';
+    return this.write(`新旅程: ${name}`, async () => {
+      const rec: TripRecord = { id: this.newId(), rev: 1, updatedAt: new Date().toISOString(), data };
+      await fs.mkdir(this.p('trips'), { recursive: true });
+      await fs.writeFile(this.p('trips', `${rec.id}.json`), JSON.stringify(rec, null, 2));
+      return rec;
+    });
+  }
+
+  /** baseRev 与当前不一致时抛 RevConflict，不覆盖别处的修改。 */
+  async saveTrip(id: string, data: TripData, baseRev: number): Promise<TripRecord> {
+    return this.write(`旅程: ${id}`, async () => {
+      const cur = await this.getTrip(id);
+      if (!cur) throw new Error(`旅程不存在: ${id}`);
+      if (cur.rev !== baseRev) throw new RevConflict(cur);
+      const next: TripRecord = { id, rev: cur.rev + 1, updatedAt: new Date().toISOString(), data };
+      await fs.writeFile(this.p('trips', `${id}.json`), JSON.stringify(next, null, 2));
+      return next;
+    });
+  }
+
+  async deleteTrip(id: string): Promise<void> {
+    await this.write(`删除旅程: ${id}`, async () => { await fs.rm(this.p('trips', `${id}.json`), { force: true }); });
   }
 }

@@ -64,10 +64,8 @@ const fence = (label: string, body: string) =>
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x.trim()) : []);
 
-export async function organize(raw: Raw, deps: OrganizerDeps, note?: string): Promise<OrganizeResult> {
-  const { store, dsh, search, ocr } = deps;
-  const extraQuestions: string[] = [];
-
+/** 本地 OCR，不出服务器。 */
+async function readImages(raw: Raw, { store, ocr }: OrganizerDeps, extraQuestions: string[]): Promise<string> {
   const ocrParts: string[] = [];
   for (const name of raw.images) {
     try {
@@ -79,6 +77,22 @@ export async function organize(raw: Raw, deps: OrganizerDeps, note?: string): Pr
   }
   const ocrText = ocrParts.join('\n\n');
   if (ocrText !== (raw.ocrText ?? '')) await store.updateRaw(raw.id, { ocrText });
+  return ocrText;
+}
+
+/** 私密原料：只做本地 OCR，不联网、不发给助手，给出一份待主人自己填写的草稿。 */
+export async function localDraft(raw: Raw, deps: OrganizerDeps): Promise<OrganizeResult> {
+  await readImages(raw, deps, []);
+  const firstLine = raw.text.split('\n').map((l) => l.trim()).find(Boolean);
+  const title = (firstLine ?? raw.urls[0] ?? '私密记录').slice(0, 40);
+  return { draft: { title, summary: '', keyPoints: [], tags: [], sourceUrls: raw.urls }, questions: [] };
+}
+
+export async function organize(raw: Raw, deps: OrganizerDeps, note?: string): Promise<OrganizeResult> {
+  if (raw.private) throw new Error('私密条目不能交给助手整理');
+  const { store, dsh, search } = deps;
+  const extraQuestions: string[] = [];
+  const ocrText = await readImages(raw, deps, extraQuestions);
 
   const pages: string[] = [];
   const titles: string[] = [];

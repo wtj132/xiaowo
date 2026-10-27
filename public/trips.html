@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121116">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/trips.css">
+  <title>旅程 · 小蜗</title>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <a class="brandmark" href="/" aria-label="小蜗 · 首页">
+        <svg class="snail" viewBox="0 0 48 48" aria-hidden="true">
+          <defs><linearGradient id="sh" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6c66b"/><stop offset=".55" stop-color="#ef8160"/><stop offset="1" stop-color="#a596f5"/></linearGradient></defs>
+          <path d="M4 40 Q4 36 10 36 L36 36 Q42 36 43 30 L44 22" fill="none" stroke="#9fd8c9" stroke-width="5" stroke-linecap="round"/>
+          <path d="M43 24 L40 10 M44 24 L46 11" stroke="#9fd8c9" stroke-width="2" stroke-linecap="round"/>
+          <g class="eye"><circle cx="40" cy="9" r="3" fill="#efebe4"/><circle cx="40.6" cy="9.3" r="1.3" fill="#121116"/></g>
+          <g class="eye"><circle cx="46" cy="10" r="3" fill="#efebe4"/><circle cx="46.6" cy="10.3" r="1.3" fill="#121116"/></g>
+          <g class="shell"><circle cx="22" cy="23" r="13" fill="url(#sh)"/>
+            <path d="M22 23 m0 -2 a2 2 0 1 1 -2 2 a4 4 0 0 1 4 -4 a6 6 0 0 1 6 6 a8 8 0 0 1 -8 8 a10 10 0 0 1 -10 -10" fill="none" stroke="#121116" stroke-opacity=".55" stroke-width="1.8" stroke-linecap="round"/></g>
+        </svg>
+        <span class="wordmark"><b>小蜗</b><small>XIAOWO · 慢慢记</small></span>
+      </a>
+      <span class="sp"></span>
+      <button class="ghost" id="import">＋ 导入旅程</button>
+      <input type="file" id="file" accept="application/json,.json" hidden>
+    </header>
+
+    <section class="hello">
+      <h1>旅程</h1>
+      <p id="stats">每一趟长途，都有自己的一页。</p>
+    </section>
+
+    <div id="list" class="trips" aria-live="polite"></div>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/trips.js" type="module"></script>
+</body>
+</html>
