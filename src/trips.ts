@@ -5,6 +5,8 @@ export interface TripRecord {
   /** 每次保存 +1；保存时带上读到的 rev，不一致说明别处改过，拒绝覆盖。 */
   rev: number;
   updatedAt: string;
+  /** 这次保存的说明（nordic-trip 在大改动、回档前会写） */
+  label?: string;
   data: TripData;
 }
 

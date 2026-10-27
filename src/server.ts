@@ -9,6 +9,8 @@ import { createDshClient, FakeDsh, type DshClient } from './dsh.js';
 import { ocrImage } from './ocr.js';
 import type { OrganizerDeps } from './organizer.js';
 import { Queue } from './queue.js';
+import { createTripSync } from './tripSync.js';
+import { forwardLlm } from './llmForward.js';
 import { createSearchClient, FakeSearch, type SearchClient } from './search.js';
 import { Store } from './store.js';
 
@@ -29,6 +31,8 @@ export async function createApp(cfg: Config, deps?: Partial<AppDeps>) {
   app.use('*', authMiddleware(cfg));
   app.post('/api/login', loginRoute(cfg));
   app.route('/', createApi({ store, enqueue: (id) => queue.enqueue(id), redo: (id, note) => queue.redo(id, note) }));
+  app.route('/', createTripSync(store));
+  app.post('/api/llm/chat/completions', forwardLlm(cfg.llmProxyUrl));
   app.use('*', serveStatic({ root: './public' }));
 
   await queue.recover();

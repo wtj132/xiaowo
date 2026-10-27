@@ -264,15 +264,48 @@ export class Store {
   }
 
   /** baseRev 与当前不一致时抛 RevConflict，不覆盖别处的修改。 */
-  async saveTrip(id: string, data: TripData, baseRev: number): Promise<TripRecord> {
-    return this.write(`旅程: ${id}`, async () => {
+  async saveTrip(id: string, data: TripData, baseRev: number, label = ''): Promise<TripRecord> {
+    return this.write(`旅程: ${id} ${label}`.trim(), async () => {
       const cur = await this.getTrip(id);
       if (!cur) throw new Error(`旅程不存在: ${id}`);
       if (cur.rev !== baseRev) throw new RevConflict(cur);
-      const next: TripRecord = { id, rev: cur.rev + 1, updatedAt: new Date().toISOString(), data };
+      const next: TripRecord = { id, rev: cur.rev + 1, updatedAt: new Date().toISOString(), ...(label ? { label } : {}), data };
       await fs.writeFile(this.p('trips', `${id}.json`), JSON.stringify(next, null, 2));
       return next;
     });
+  }
+
+  /** 旅程的历史版本直接取自 git：每次保存都是一次提交。 */
+  async tripHistory(id: string, limit = 60): Promise<TripRecord[]> {
+    await this.chain; // 等正在进行的写入提交完
+    const path = `trips/${id}.json`;
+    const log = await this.git('log', `-n${limit}`, '--format=%H', '--', path).then((r) => r.stdout, () => '');
+    const out: TripRecord[] = [];
+    for (const hash of log.split('\n').filter(Boolean)) {
+      try { out.push(JSON.parse((await this.git('show', `${hash}:${path}`)).stdout) as TripRecord); } catch { /* 删除提交等 */ }
+    }
+    return out;
+  }
+
+  /** 旅程附带的小数据（助手设置、对话），可能含模型密钥：只放在服务器磁盘上，永不进 git。 */
+  private kvPath(id: string, name: string) { return this.p('.trip-kv', id, `${name}.json`); }
+  async getTripKv(id: string, name: string): Promise<unknown> {
+    return (await this.readJson<{ data: unknown }>(this.kvPath(id, name)))?.data ?? null;
+  }
+  async putTripKv(id: string, name: string, data: unknown): Promise<void> {
+    await this.ready;
+    await fs.mkdir(this.p('.trip-kv', id), { recursive: true, mode: 0o700 });
+    await this.ensureExcluded('/.trip-kv/');
+    const file = this.kvPath(id, name);
+    await fs.writeFile(`${file}.tmp`, JSON.stringify({ data }), { mode: 0o600 });
+    await fs.rename(`${file}.tmp`, file);
+  }
+  private async ensureExcluded(pattern: string) {
+    const file = this.p('.git', 'info', 'exclude');
+    const cur = await fs.readFile(file, 'utf8').catch(() => '');
+    if (cur.split('\n').includes(pattern)) return;
+    await fs.mkdir(this.p('.git', 'info'), { recursive: true });
+    await fs.appendFile(file, `\n${pattern}\n`);
   }
 
   async deleteTrip(id: string): Promise<void> {

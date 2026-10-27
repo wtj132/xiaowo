@@ -9,6 +9,8 @@ export interface Config {
   searchCmd: string[];
   tesseractLangs: string;
   trustProxy: boolean;
+  /** 模型转发服务（lifeagent 运行）的地址；为空时旅程助手不可用 */
+  llmProxyUrl: string;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -29,5 +31,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     searchCmd: (env.SEARCH_CMD ?? 'uvx free-search-mcp').split(' ').filter(Boolean),
     tesseractLangs: env.TESSERACT_LANGS ?? 'chi_sim+eng',
     trustProxy: env.TRUST_PROXY === '1',
+    llmProxyUrl: env.LLM_PROXY_URL ?? '',
   };
 }

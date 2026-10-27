@@ -53,7 +53,7 @@ function card(t) {
     : p.kind === 'live' ? h('div', { class: 'big' }, '第', h('em', {}, p.n), `天 · 共 ${t.days} 天`)
     : h('div', { class: 'big' }, `${year} 年 · 共 ${t.days} 天`);
   const ratio = t.budget ? t.spent / t.budget : 0;
-  return h('a', { class: 'trip', href: `/trip.html?id=${t.id}`, onclick: (e) => { e.preventDefault(); toast('旅程详情页下一步接入'); } },
+  return h('a', { class: 'trip', href: `/trip.html?id=${t.id}` },
     h('div', { class: 'cover' },
       t.cover ? h('img', { src: t.cover, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', onerror: (e) => e.target.remove() }) : null,
       h('span', { class: `badge ${p.kind}` }, h('i'), p.label),
