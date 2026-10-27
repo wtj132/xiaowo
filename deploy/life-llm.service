@@ -11,7 +11,7 @@ WorkingDirectory=/opt/life
 Environment=LLM_KEY_FILE=/var/lib/lifeagent/deepseek.key
 Environment=LLM_PORT=8791
 Environment=LLM_MODELS=deepseek-chat,deepseek-reasoner
-ExecStart=/usr/bin/node /opt/life/dist/llmProxy.js
+ExecStart=/usr/local/bin/node /opt/life/dist/llmProxy.js
 Restart=on-failure
 RestartSec=3
 
