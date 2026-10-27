@@ -30,13 +30,7 @@ async function api(path, opts = {}) {
 const post = (path, body) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
 
 const STATUS = { saved: '已收好', organizing: '整理中…', drafted: '待确认', failed: '整理失败' };
-const CN_MONTH = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'];
-const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
-{
-  const d = new Date();
-  document.getElementById('issue').textContent = `${CN_MONTH[d.getMonth()]}月 · 第 ${d.getDate()} 期 · 周${WEEK[d.getDay()]}`;
-}
-const section = (name, count) => h('h2', { class: 'section' }, name, count != null ? h('span', { class: 'count' }, String(count).padStart(2, '0')) : null);
+const section = (name, count, more) => h('h2', { class: 'section' }, name, count != null ? h('span', { class: 'count' }, count) : null, more ?? null);
 const fmt = (id) => `${id.slice(4, 6)}-${id.slice(6, 8)} ${id.slice(9, 11)}:${id.slice(11, 13)}`;
 
 // ------------------------------------------------------------------ 登录
@@ -58,11 +52,21 @@ function renderLogin() {
 // ------------------------------------------------------------------ 首页
 let compose = { clientId: crypto.randomUUID(), files: [] };
 
+const DAY = 864e5;
+const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const idDate = (id) => `${id.slice(0, 4)}-${id.slice(4, 6)}-${id.slice(6, 8)}`;
+const greet = () => { const hr = new Date().getHours(); return hr < 5 ? '夜深了' : hr < 11 ? '早上好' : hr < 14 ? '中午好' : hr < 18 ? '下午好' : '晚上好'; };
+const imgUrl = (rawId, name) => `/api/files/${rawId}/${name}`;
+
+// 与旅程页一致的国家色
+const COUNTRY_COLOR = { DK: '#E9798A', SE: '#8DB0EE', NO: '#7CCAA9', FI: '#A3D9E8', IS: '#C3CDE0', DE: '#E2B98A', EE: '#9AB7D6', IE: '#8FCB8F' };
+
 async function renderHome() {
-  const ta = h('textarea', { placeholder: '丢点什么进来：链接、文字、截图…', 'aria-label': '投递内容', autofocus: true });
+  const ta = h('textarea', { placeholder: '丢点什么进来：刚看完的电影、一张截图、一个链接、一句话…', 'aria-label': '投递内容', rows: 2 });
   const thumbs = h('div', { class: 'thumbs' });
   const fileInput = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
-  const send = h('button', { class: 'primary' }, '发送');
+  const send = h('button', { class: 'primary' }, '收下');
   const priv = h('input', { type: 'checkbox', 'aria-label': '私密' });
 
   const drawThumbs = () => thumbs.replaceChildren(...compose.files.map((f, i) =>
@@ -70,6 +74,8 @@ async function renderHome() {
   const addFiles = (list) => { compose.files.push(...[...list].filter((f) => f.type.startsWith('image/'))); drawThumbs(); };
   fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value = ''; });
   ta.addEventListener('paste', (e) => { const imgs = [...e.clipboardData.files]; if (imgs.length) { e.preventDefault(); addFiles(imgs); } });
+  // 文字多了输入框跟着长高
+  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 320)}px`; });
 
   send.addEventListener('click', async () => {
     if (!ta.value.trim() && !compose.files.length) return toast('先写点什么，或者贴张图');
@@ -82,32 +88,48 @@ async function renderHome() {
     try {
       await api('/api/capture', { method: 'POST', body: fd });
       compose = { clientId: crypto.randomUUID(), files: [] };
-      ta.value = ''; priv.checked = false; drawThumbs(); toast('已收好 ✓');
+      ta.value = ''; ta.style.height = ''; priv.checked = false; drawThumbs(); toast('收下了 ✓');
       loadLists();
     } catch (e) {
       if (e instanceof AuthError) return renderLogin();
-      toast(e.message === 'Failed to fetch' ? '网络不通，内容还在，再点一次发送' : e.message);
+      toast(e.message === 'Failed to fetch' ? '网络不通，内容还在，再点一次' : e.message);
     } finally { send.disabled = false; }
   });
 
-  const pendingHead = h('div');
-  const pending = h('div', { class: 'pending' });
-  const recentHead = h('div');
-  const recent = h('div');
+  const now = new Date();
+  const sub = h('p', {}, `${now.getMonth() + 1} 月 ${now.getDate()} 日 · 周${WEEK[now.getDay()]}`);
+  const pendingBox = h('div');
+  const tripsBox = h('div');
+  const memoryBox = h('div');
+  const feedBox = h('div');
   app.replaceChildren(
+    h('section', { class: 'hello' }, h('h1', {}, `${greet()}，今天过得怎么样？`), sub),
     h('div', { class: 'capture' }, ta, thumbs,
-      h('div', { class: 'row' }, h('button', { class: 'quiet', onclick: () => fileInput.click() }, '＋ 图片'), fileInput, h('label', { class: 'toggle', title: '私密：不发给助手，不进 GitHub 备份' }, priv, ' 私密'), h('span', { class: 'spacer' }), send)),
-    pendingHead, pending, recentHead, recent);
+      h('div', { class: 'row' },
+        h('button', { class: 'quiet', onclick: () => fileInput.click() }, '＋ 图片'), fileInput,
+        h('label', { class: 'toggle', title: '私密：不发给助手，不进 GitHub 备份' }, priv, '私密'),
+        h('span', { class: 'spacer' }), send),
+      h('div', { class: 'hint-line' }, '不用选分类，助手会整理好，你确认就行。')),
+    pendingBox, tripsBox, memoryBox, feedBox);
   drawThumbs();
 
   async function loadLists() {
     try {
-      const [{ items }, { entries }] = await Promise.all([api('/api/inbox'), api('/api/entries')]);
-      pendingHead.replaceChildren(items.length ? section('待你确认', items.length) : '');
-      pending.replaceChildren(...items.map(inboxItem));
-      recentHead.replaceChildren(section('最近入库', entries.length || null));
-      const [lead, ...rest] = entries.slice(0, 21);
-      recent.replaceChildren(...(lead ? [leadItem(lead), h('div', { class: 'toc' }, rest.map(entryItem))] : [h('div', { class: 'empty' }, '还没有条目。丢点什么进来，这里就是第一篇。')]));
+      const [{ items }, { entries }, trips] = await Promise.all([
+        api('/api/inbox'), api('/api/entries'), api('/api/trips').then((r) => r.trips).catch(() => []),
+      ]);
+      // 这周记了几条：最近 7 天收进来的所有东西
+      const weekAgo = ymd(new Date(Date.now() - 6 * DAY));
+      const thisWeek = entries.filter((e) => idDate(e.id) >= weekAgo).length + items.filter((i) => idDate(i.raw.id) >= weekAgo).length;
+      sub.textContent = `${now.getMonth() + 1} 月 ${now.getDate()} 日 · 周${WEEK[now.getDay()]}${thisWeek ? ` · 这周记了 ${thisWeek} 条` : ''}`;
+      drawTrail(entries);
+
+      pendingBox.replaceChildren(...(items.length ? [section('待你确认', items.length), h('div', { class: 'pending' }, items.map(inboxItem))] : []));
+      tripsBox.replaceChildren(...tripStrip(trips));
+      memoryBox.replaceChildren(...memory(entries));
+      feedBox.replaceChildren(section('最近', entries.length || null),
+        entries.length ? h('div', { class: 'feed' }, entries.slice(0, 30).map(entryCard))
+          : h('div', { class: 'empty' }, '还没有条目。丢点什么进来，这里就是第一条。'));
       clearInterval(timer);
       if (items.some((i) => i.raw.status === 'saved' || i.raw.status === 'organizing')) timer = setInterval(loadLists, 4000);
     } catch (e) { if (e instanceof AuthError) renderLogin(); }
@@ -115,23 +137,74 @@ async function renderHome() {
   loadLists();
 }
 
-function inboxItem({ raw, draft }) {
-  const title = draft?.draft?.title || raw.text.split('\n')[0].slice(0, 40) || raw.urls[0] || '（图片）';
-  const asks = draft?.questions?.length;
-  return h('a', { class: 'item', href: `#/draft/${raw.id}` },
-    h('div', { class: 'title' }, title),
-    h('span', { class: `chip state ${raw.status === 'failed' ? 'bad' : raw.status === 'drafted' ? 'ask' : ''}` }, STATUS[raw.status] || raw.status),
-    h('div', { class: 'meta' }, raw.private ? '私密 · ' : '', fmt(raw.id), asks ? ` · 助手有 ${asks} 个问题` : ''));
+/** 顶栏右侧：连续记录了几天（今天还没记就从昨天往回数） */
+function drawTrail(entries) {
+  const el = document.getElementById('trail');
+  const days = new Set(entries.map((e) => idDate(e.id)));
+  let d = new Date(), n = 0;
+  if (!days.has(ymd(d))) d = new Date(Date.now() - DAY);
+  while (days.has(ymd(d))) { n++; d = new Date(d.getTime() - DAY); }
+  el.hidden = n < 2;
+  el.replaceChildren(...Array.from({ length: Math.min(n, 4) }, (_, i) => h('i', { style: `opacity:${(i + 1) / Math.min(n, 4)}` })), `${n} 天`);
+  el.title = `连续记录 ${n} 天`;
 }
-const entryItem = (e) => h('a', { class: 'item', href: `#/entry/${e.id}` },
-  h('div', {},
-    h('div', { class: 'title' }, e.title),
-    h('div', { class: 'meta' }, e.private ? h('span', { class: 'chip state' }, '私密') : null, e.tags.slice(0, 3).map((t) => h('span', { class: 'chip' }, t)), fmt(e.id))));
-const leadItem = (e) => h('a', { class: 'lead item', href: `#/entry/${e.id}` },
-  h('div', { class: 'kicker' }, '头条', e.private ? h('span', {}, '私密') : null, e.tags.slice(0, 2).map((t) => h('span', {}, t))),
-  h('div', { class: 'title' }, e.title),
-  e.summary ? h('p', { class: 'deck' }, e.summary) : null,
-  h('div', { class: 'meta', style: 'margin-top:12px' }, fmt(e.id)));
+
+function tripStrip(trips) {
+  const today = ymd(new Date());
+  const active = trips.filter((t) => t.end >= today).sort((a, b) => a.start.localeCompare(b.start));
+  if (!active.length) return [];
+  return [section('旅程', null, h('a', { class: 'more', href: '/trips.html' }, `全部 ${trips.length} →`)),
+    h('div', { class: 'trips-row' }, active.map((t) => {
+      const live = t.start <= today;
+      const n = Math.round((Date.parse(live ? today : t.start) - Date.parse(live ? t.start : today)) / DAY);
+      return h('a', { class: 'tripc', href: `/trip.html?id=${t.id}` },
+        h('div', { class: 'cover' }, t.cover ? h('img', { src: t.cover, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', onerror: (e) => e.target.remove() }) : null),
+        h('div', { style: 'flex:1;min-width:0' },
+          h('div', { class: `k ${live ? 'live' : ''}` }, live ? `进行中 · 第 ${n + 1} 天` : `还有 ${n} 天出发`),
+          h('div', { class: 't' }, t.name),
+          h('div', { class: 'stripe' }, t.countries.map((c) => h('span', { style: `background:${COUNTRY_COLOR[c] ?? '#B9C4CC'}` }))),
+          h('div', { class: 's' }, `${t.start.slice(5).replace('-', '.')} – ${t.end.slice(5).replace('-', '.')} · ${t.days} 天`)));
+    }))];
+}
+
+/** 那年今日：往年同一周（前后 3 天）记下的东西，没有就不显示 */
+function memory(entries) {
+  const now = new Date();
+  const md = (d) => (d.getMonth() + 1) * 100 + d.getDate();
+  const lo = md(new Date(Date.now() - 3 * DAY)), hi = md(new Date(Date.now() + 3 * DAY));
+  const hit = entries.find((e) => {
+    const y = +e.id.slice(0, 4), v = +e.id.slice(4, 8);
+    return y < now.getFullYear() && (lo <= hi ? v >= lo && v <= hi : v >= lo || v <= hi);
+  });
+  if (!hit) return [];
+  const years = now.getFullYear() - +hit.id.slice(0, 4);
+  return [section('那年今日', null, h('span', { class: 'count' }, `${years} 年前的这周`)),
+    h('a', { class: 'memory', href: `#/entry/${hit.id}` },
+      h('div', { class: 'pic' }, hit.images?.length ? h('img', { src: imgUrl(hit.rawId, hit.images[0]), alt: '', loading: 'lazy' }) : null),
+      h('div', { class: 'txt' },
+        h('div', { class: 'when' }, `${idDate(hit.id).replaceAll('-', '.')}${hit.tags.length ? ` · ${hit.tags.slice(0, 2).join(' · ')}` : ''}`),
+        h('div', { class: 'q' }, hit.summary || hit.title),
+        h('div', { class: 'from' }, hit.title)))];
+}
+
+function inboxItem({ raw, draft }) {
+  const d = draft?.draft;
+  const title = d?.title || raw.text.split('\n')[0].slice(0, 40) || raw.urls[0] || '（图片）';
+  const state = raw.status === 'failed' ? ['bad', '整理失败'] : raw.status === 'drafted' ? ['wait', '待你确认'] : ['', STATUS[raw.status] || raw.status];
+  return h('a', { class: 'pend', href: `#/draft/${raw.id}` },
+    h('span', { class: `tag ${state[0]}` }, h('i'), raw.private ? `私密 · ${state[1]}` : state[1]),
+    h('div', { class: 't' }, title),
+    d?.summary ? h('div', { class: 'd' }, d.summary) : null,
+    draft?.questions?.length ? h('div', { class: 'ask' }, draft.questions.slice(0, 2).map((q) => h('span', {}, q.length > 18 ? `${q.slice(0, 18)}…` : q))) : null);
+}
+
+const entryCard = (e) => h('a', { class: 'f', href: `#/entry/${e.id}` },
+  e.images?.length ? h('div', { class: 'shot' }, h('img', { src: imgUrl(e.rawId, e.images[0]), alt: '', loading: 'lazy' })) : null,
+  h('div', { class: 'body' },
+    h('span', { class: `tag ${e.private ? 'priv' : ''}` }, h('i'), e.private ? '私密' : (e.tags[0] || '随手记')),
+    h('div', { class: 't' }, e.title),
+    e.summary ? h('div', { class: 'd' }, e.summary) : null,
+    h('div', { class: 'm' }, h('span', {}, fmt(e.id)), e.tags.slice(1, 3).map((t) => h('span', { class: 'chip' }, t)))));
 
 // ------------------------------------------------------------------ 表单（草稿 / 条目共用）
 function draftForm(d) {
@@ -160,7 +233,7 @@ async function renderDraft(id) {
   const item = items.find((i) => i.raw.id === id);
   if (!item) { location.hash = '#/'; return; }
   const { raw, draft: rec } = item;
-  const back = h('a', { class: 'back', href: '#/' }, '← 回到首页');
+  const back = h('a', { class: 'back', href: '#/' }, '← 返回');
   const parts = [back, h('header', { class: 'article-head' }, h('div', { class: 'kicker' }, STATUS[raw.status] || '草稿', raw.private ? h('span', {}, '私密') : null), h('h1', {}, rec?.draft?.title || '整理中…'), h('div', { class: 'meta' }, fmt(raw.id)))];
 
   parts.push(section('原料'), h('div', { class: 'source' }, h('div', { class: 'raw' }, raw.text || '（无文字）'), raw.urls.length ? links(raw.urls) : null, raw.images.length ? images(raw.id, raw.images) : null));
@@ -212,7 +285,7 @@ async function renderDraft(id) {
 async function renderEntry(id) {
   const { entry, images: names } = await api(`/api/entries/${id}`);
   const view = () => app.replaceChildren(...[
-    h('a', { class: 'back', href: '#/' }, '← 回到首页'),
+    h('a', { class: 'back', href: '#/' }, '← 返回'),
     h('header', { class: 'article-head' },
       h('div', { class: 'kicker' }, entry.private ? h('span', {}, '私密') : null, entry.tags.map((t) => h('span', {}, t))),
       h('h1', {}, entry.title),
@@ -225,7 +298,7 @@ async function renderEntry(id) {
     h('div', { class: 'row', style: 'margin-top:24px' }, h('button', { onclick: edit }, '编辑'))].flat().filter(Boolean));
   const edit = () => {
     const form = draftForm(entry);
-    app.replaceChildren(h('a', { class: 'back', href: '#/' }, '← 回到首页'), form.el, h('div', { class: 'row actions' },
+    app.replaceChildren(h('a', { class: 'back', href: '#/' }, '← 返回'), form.el, h('div', { class: 'row actions' },
       h('button', { class: 'primary', onclick: async () => {
         const { entry: next } = await api(`/api/entries/${id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ draft: form.value() }) });
         Object.assign(entry, next); toast('已保存'); view();
@@ -238,6 +311,9 @@ async function renderEntry(id) {
 async function route() {
   clearInterval(timer);
   const [, kind, id] = location.hash.split('/');
+  app.classList.toggle('article', kind === 'draft' || kind === 'entry');
+  document.querySelectorAll('[data-nav="home"]').forEach((a) => a.classList.toggle('on', !kind || kind === ''));
+  window.scrollTo(0, 0);
   try {
     if (kind === 'draft' && id) await renderDraft(id);
     else if (kind === 'entry' && id) await renderEntry(id);
@@ -248,4 +324,10 @@ async function route() {
   }
 }
 window.addEventListener('hashchange', route);
+document.getElementById('tab-plus').addEventListener('click', async () => {
+  if (location.hash && location.hash !== '#/') { location.hash = '#/'; await new Promise((r) => setTimeout(r, 120)); }
+  const ta = app.querySelector('.capture textarea');
+  ta?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  ta?.focus();
+});
 route();

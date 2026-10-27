@@ -136,7 +136,12 @@ export function createApi(deps: ApiDeps) {
     return c.json({ ok: true }, 202);
   });
 
-  api.get('/api/entries', async (c) => c.json({ entries: await store.listEntries() }));
+  api.get('/api/entries', async (c) => {
+    const entries = await store.listEntries();
+    // 首页信息流要显示封面图：附上原料里的图片文件名
+    const withImages = await Promise.all(entries.map(async (e) => ({ ...e, images: (await store.getRaw(e.rawId))?.images ?? [] })));
+    return c.json({ entries: withImages });
+  });
 
   api.get('/api/entries/:id', async (c) => {
     const entry = ID_RE.test(c.req.param('id')) ? await store.getEntry(c.req.param('id')) : null;

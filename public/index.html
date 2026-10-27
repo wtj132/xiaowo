@@ -3,18 +3,42 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f4f1ea">
+  <meta name="theme-color" content="#121116">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="life">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="小蜗">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
-  <title>life</title>
+  <title>小蜗</title>
 </head>
 <body>
-  <header class="masthead"><a class="brand" href="#/">小窝</a><span class="issue" id="issue"></span></header>
-  <main id="app"></main>
+  <div class="wrap">
+    <header class="top">
+      <a class="brandmark" href="#/" aria-label="小蜗 · 首页">
+        <svg class="snail" viewBox="0 0 48 48" aria-hidden="true">
+          <defs><linearGradient id="sh" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6c66b"/><stop offset=".55" stop-color="#ef8160"/><stop offset="1" stop-color="#a596f5"/></linearGradient></defs>
+          <path d="M4 40 Q4 36 10 36 L36 36 Q42 36 43 30 L44 22" fill="none" stroke="#9fd8c9" stroke-width="5" stroke-linecap="round"/>
+          <path d="M43 24 L40 10 M44 24 L46 11" stroke="#9fd8c9" stroke-width="2" stroke-linecap="round"/>
+          <g class="eye"><circle cx="40" cy="9" r="3" fill="#efebe4"/><circle cx="40.6" cy="9.3" r="1.3" fill="#121116"/></g>
+          <g class="eye"><circle cx="46" cy="10" r="3" fill="#efebe4"/><circle cx="46.6" cy="10.3" r="1.3" fill="#121116"/></g>
+          <g class="shell"><circle cx="22" cy="23" r="13" fill="url(#sh)"/>
+            <path d="M22 23 m0 -2 a2 2 0 1 1 -2 2 a4 4 0 0 1 4 -4 a6 6 0 0 1 6 6 a8 8 0 0 1 -8 8 a10 10 0 0 1 -10 -10" fill="none" stroke="#121116" stroke-opacity=".55" stroke-width="1.8" stroke-linecap="round"/></g>
+        </svg>
+        <span class="wordmark"><b>小蜗</b><small>XIAOWO · 慢慢记</small></span>
+      </a>
+      <span class="sp"></span>
+      <nav class="topnav" aria-label="主导航"><a href="#/" data-nav="home">今天</a><a href="/trips.html">旅程</a></nav>
+      <div class="trail" id="trail" hidden></div>
+    </header>
+    <main id="app"></main>
+  </div>
+  <nav class="tabbar" aria-label="主导航">
+    <a href="#/" data-nav="home"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="5"/></svg>今天</a>
+    <button type="button" class="plus" id="tab-plus" aria-label="记一条">＋</button>
+    <a href="/trips.html"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/><circle cx="12" cy="12" r="9"/></svg>旅程</a>
+  </nav>
   <div id="toast" role="status" aria-live="polite"></div>
   <script src="/app.js" type="module"></script>
 </body>
