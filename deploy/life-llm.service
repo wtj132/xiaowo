@@ -1,0 +1,26 @@
+# 模型转发服务：以 lifeagent 运行，只有它能读 DeepSeek 密钥；站点进程经 127.0.0.1:8791 调用它。
+[Unit]
+Description=xiaowo DeepSeek proxy (trip assistant)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=lifeagent
+Group=lifeagent
+WorkingDirectory=/opt/life
+Environment=LLM_KEY_FILE=/var/lib/lifeagent/deepseek.key
+Environment=LLM_PORT=8791
+Environment=LLM_MODELS=deepseek-chat,deepseek-reasoner
+ExecStart=/usr/bin/node /opt/life/dist/llmProxy.js
+Restart=on-failure
+RestartSec=3
+
+# 只读系统，只能读自己的密钥目录
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/opt/life /var/lib/lifeagent
+
+[Install]
+WantedBy=multi-user.target
