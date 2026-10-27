@@ -33,7 +33,8 @@ export async function createApp(cfg: Config, deps?: Partial<AppDeps>) {
   app.route('/', createApi({ store, enqueue: (id) => queue.enqueue(id), redo: (id, note) => queue.redo(id, note) }));
   app.route('/', createTripSync(store));
   app.post('/api/llm/chat/completions', forwardLlm(cfg.llmProxyUrl));
-  app.use('*', serveStatic({ root: './public' }));
+  // 每次都让浏览器回来确认文件有没有变（没变只回 304），部署后不会卡在旧版
+  app.use('*', serveStatic({ root: './public', onFound: (_path, c) => { c.header('Cache-Control', 'no-cache'); } }));
 
   await queue.recover();
   const close = async () => { await dsh.close(); await search.close(); };
