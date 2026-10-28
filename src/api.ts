@@ -5,6 +5,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { RevConflict, type Draft, type Store } from './store.js';
 import { parseTripImport, summarize } from './trips.js';
 import { cleanFields, repoScenes } from './scenes.js';
+import { OCCURRED_RE } from './time.js';
 
 export interface ApiDeps {
   store: Store;
@@ -43,7 +44,7 @@ function parseDraft(v: any): Draft | null {
     ...(typeof v.possibleDuplicateOf === 'string' ? { possibleDuplicateOf: v.possibleDuplicateOf } : {}),
     ...(scene ? { scene: scene.id, fields: cleanFields(scene, v.fields) } : {}),
     ...(typeof v.oneLine === 'string' && v.oneLine.trim() ? { oneLine: v.oneLine.trim().slice(0, 120) } : {}),
-    ...(typeof v.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.date) ? { date: v.date } : {}),
+    ...(typeof v.date === 'string' && OCCURRED_RE.test(v.date) ? { date: v.date } : {}),
     ...(Array.isArray(v.relations) ? { relations: v.relations.filter(isLink).slice(0, 12) } : {}),
   };
 }

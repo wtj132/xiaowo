@@ -1,20 +1,70 @@
 ---
 {
-  "id": "film", "name": "影视", "group": "taste", "color": "#f2b544",
+  "id": "film",
+  "name": "影视",
+  "group": "taste",
+  "color": "#f2b544",
   "detect": "电影、剧集、纪录片、动画、综艺；豆瓣/IMDb/B站番剧/各视频平台的影视链接；\"看了\"\"二刷\"\"追剧\"\"想看\"",
   "fields": [
-    { "key": "work", "label": "片名", "type": "text", "required": true },
-    { "key": "year", "label": "年份", "type": "number" },
-    { "key": "creator", "label": "导演/主创", "type": "text" },
-    { "key": "status", "label": "状态", "type": "enum", "options": ["想看", "在看", "看完", "弃了"], "default": "看完" },
-    { "key": "progress", "label": "进度", "type": "text", "hint": "在看时填，如 第 9/12 集" },
-    { "key": "date", "label": "看的日期", "type": "date" },
-    { "key": "with", "label": "和谁", "type": "text" },
-    { "key": "rating", "label": "星级", "type": "stars" },
-    { "key": "review", "label": "一句话", "type": "text" },
-    { "key": "quotes", "label": "台词/片段", "type": "list" }
+    {
+      "key": "work",
+      "label": "片名",
+      "type": "text",
+      "required": true
+    },
+    {
+      "key": "year",
+      "label": "年份",
+      "type": "number"
+    },
+    {
+      "key": "creator",
+      "label": "导演/主创",
+      "type": "text"
+    },
+    {
+      "key": "status",
+      "label": "状态",
+      "type": "enum",
+      "options": [
+        "想看",
+        "在看",
+        "看完",
+        "弃了"
+      ],
+      "default": "看完"
+    },
+    {
+      "key": "progress",
+      "label": "进度",
+      "type": "text",
+      "hint": "在看时填，如 第 9/12 集"
+    },
+    {
+      "key": "with",
+      "label": "和谁",
+      "type": "text"
+    },
+    {
+      "key": "rating",
+      "label": "星级",
+      "type": "stars"
+    },
+    {
+      "key": "review",
+      "label": "一句话",
+      "type": "text"
+    },
+    {
+      "key": "quotes",
+      "label": "台词/片段",
+      "type": "list"
+    }
   ],
-  "ask": ["rating", "with"],
+  "ask": [
+    "rating",
+    "with"
+  ],
   "enrich": "联网补 年份、导演/主创；只补事实，不替主人写感受",
   "card": "poster"
 }

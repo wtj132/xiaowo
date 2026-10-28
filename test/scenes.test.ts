@@ -43,9 +43,26 @@ describe('two-step organize', () => {
     const r = await organize(raw, deps(dsh));
     expect(dsh.prompts).toHaveLength(2);
     expect(dsh.prompts[1]).toContain('小小蜗');
-    expect(dsh.prompts[1]).toContain('看的日期');
+    expect(dsh.prompts[1]).toContain('和谁');
+    expect(dsh.prompts[1]).not.toContain('拆卡片'); // 影视不是知识，不拆卡片
     expect(r.draft).toMatchObject({ scene: 'film', date: '2026-10-27', oneLine: '雨夜那段太美了', fields: { work: '花样年华', year: 2000, rating: 5, status: '看完' } });
     expect(r.questions).toEqual(['和谁看的？']);
+  });
+  it('defaults the occurred time to the record time, and keeps a time the text gave', async () => {
+    const raw = await store.createRaw({ clientId: 'd', text: '昨晚的日记'.repeat(100), urls: [], images: [] });
+    const reply = (date: string) => new FakeDsh((p) => p.startsWith('## 识别场景') ? '{"scene":"note"}' : JSON.stringify({ title: 'x', summary: '', date }));
+    const none = await organize(raw, deps(reply('')));
+    expect(none.draft.date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+    expect((await organize(raw, deps(reply('2026-10-27T22:30')))).draft.date).toBe('2026-10-27T22:30');
+    expect((await organize(raw, deps(reply('昨晚')))).draft.date).toBe(none.draft.date);
+  });
+  it('every knowledge scene proposes cards, life and taste scenes do not', async () => {
+    const raw = await store.createRaw({ clientId: 'b', text: 'Caddy 证书签发失败'.repeat(40), urls: [], images: [] });
+    const dsh = new FakeDsh((p) => p.startsWith('## 识别场景') ? '{"scene":"bug"}' : JSON.stringify({
+      title: 'Caddy 证书签发失败', summary: '', fields: { symptom: '80 端口被占' }, cards: [{ title: 'http-01 校验需要 80 端口对外可达', draft: '', links: [] }] }));
+    const r = await organize(raw, deps(dsh));
+    expect(dsh.prompts[1]).toContain('拆卡片');
+    expect(r.draft.cards?.[0].title).toBe('http-01 校验需要 80 端口对外可达');
   });
   it('falls back to note when detection is garbage, and offers alternatives when unsure', async () => {
     expect((await detectScene(new FakeDsh('不知道'), scenes, 'x')).scene.id).toBe('note');

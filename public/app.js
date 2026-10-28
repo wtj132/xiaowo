@@ -58,6 +58,17 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0
 const idDate = (id) => `${id.slice(0, 4)}-${id.slice(4, 6)}-${id.slice(6, 8)}`;
 const greet = () => { const hr = new Date().getHours(); return hr < 5 ? '夜深了' : hr < 11 ? '早上好' : hr < 14 ? '中午好' : hr < 18 ? '下午好' : '晚上好'; };
 const imgUrl = (rawId, name) => `/api/files/${rawId}/${name}`;
+/** 发生时间：条目写了就用，没写（旧条目）就用入库时间，按浏览器所在时区 */
+const pad2 = (n) => String(n).padStart(2, '0');
+const localStampOf = (iso) => { const d = new Date(iso); return `${ymd(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const occurred = (e) => e.date || localStampOf(e.createdAt);
+const dayLabel = (day) => {
+  const today = ymd(new Date()), yest = ymd(new Date(Date.now() - DAY));
+  const d = new Date(`${day}T12:00`);
+  const md = `${d.getMonth() + 1} 月 ${d.getDate()} 日 · 周${WEEK[d.getDay()]}`;
+  return day === today ? `今天 · ${md}` : day === yest ? `昨天 · ${md}` : d.getFullYear() === new Date().getFullYear() ? md : `${d.getFullYear()} 年 ${md}`;
+};
+const isKnowledge = (e) => sceneOf(e.scene)?.group === 'knowledge';
 
 // 与旅程页一致的国家色
 const COUNTRY_COLOR = { DK: '#E9798A', SE: '#8DB0EE', NO: '#7CCAA9', FI: '#A3D9E8', IS: '#C3CDE0', DE: '#E2B98A', EE: '#9AB7D6', IE: '#8FCB8F' };
@@ -101,6 +112,7 @@ async function renderHome() {
   const pendingBox = h('div');
   const tripsBox = h('div');
   const memoryBox = h('div');
+  const cardBox = h('div');
   const feedBox = h('div');
   app.replaceChildren(
     h('section', { class: 'hello' }, h('h1', {}, `${greet()}，今天过得怎么样？`), sub),
@@ -110,7 +122,7 @@ async function renderHome() {
         h('label', { class: 'toggle', title: '私密：不发给助手，不进 GitHub 备份' }, priv, '私密'),
         h('span', { class: 'spacer' }), send),
       h('div', { class: 'hint-line' }, '不用选分类，助手会整理好，你确认就行。')),
-    pendingBox, tripsBox, memoryBox, feedBox);
+    pendingBox, tripsBox, memoryBox, cardBox, feedBox);
   drawThumbs();
 
   async function loadLists() {
@@ -127,14 +139,51 @@ async function renderHome() {
       pendingBox.replaceChildren(...(items.length ? [section('待你确认', items.length), h('div', { class: 'pending' }, items.map(inboxItem))] : []));
       tripsBox.replaceChildren(...tripStrip(trips));
       memoryBox.replaceChildren(...memory(entries));
-      feedBox.replaceChildren(section('最近', entries.length || null),
-        entries.length ? h('div', { class: 'feed' }, entries.slice(0, 30).map(entryCard))
-          : h('div', { class: 'empty' }, '还没有条目。丢点什么进来，这里就是第一条。'));
+      cardBox.replaceChildren(...cardShelf(entries).filter(Boolean));
+      // 生活和品味按发生时间串成时间线，按天分组
+      const life = entries.filter((e) => !isKnowledge(e)).sort((a, b) => occurred(b).localeCompare(occurred(a))).slice(0, 40);
+      const days = [];
+      for (const e of life) { const day = occurred(e).slice(0, 10); (days.at(-1)?.day === day ? days.at(-1).items : (days.push({ day, items: [] }), days.at(-1).items)).push(e); }
+      feedBox.replaceChildren(section('时间线', null, h('span', { class: 'count' }, '生活和品味，按发生时间')),
+        days.length ? h('div', { class: 'timeline' }, days.map(({ day, items: es }) => h('div', { class: 'tday' },
+          h('div', { class: 'tdate' }, dayLabel(day)), h('div', { class: 'feed' }, es.map(entryCard)))))
+          : h('div', { class: 'empty' }, '还没有生活记录。看了部电影、去了个地方、想记一句话，都丢进来。'));
       clearInterval(timer);
       if (items.some((i) => i.raw.status === 'saved' || i.raw.status === 'organizing')) timer = setInterval(loadLists, 4000);
     } catch (e) { if (e instanceof AuthError) renderLogin(); }
   }
   loadLists();
+}
+
+/**
+ * 卡片盒（Zettelkasten）：永久卡片单独成区，不混在时间流里。
+ * 显示最近的卡片和它的链接数；文献笔记（论文等）14 天没拆出卡片的，轻轻提一下「待消化」。
+ */
+function cardShelf(entries) {
+  const cards = entries.filter((e) => e.scene === 'card');
+  const linksOf = (id) => entries.filter((x) => x.relations?.some((l) => l.to === id)).length;
+  const cited = new Set(cards.flatMap((c) => (c.relations ?? []).filter((l) => l.type === '出处').map((l) => l.to)));
+  const sources = new Set([...SCENES.values()].filter((s) => s.group === 'knowledge' && s.id !== 'card').map((s) => s.id));
+  const notes = entries.filter((e) => sources.has(e.scene)).slice(0, 6);
+  const old = ymd(new Date(Date.now() - 14 * DAY));
+  const undigested = entries.filter((e) => sources.has(e.scene) && !cited.has(e.id) && idDate(e.id) <= old).slice(0, 3);
+  const more = h('span', { class: 'count' }, cards.length ? `${cards.length} 张卡片 · ${notes.length ? `${entries.filter((e) => sources.has(e.scene)).length} 条笔记` : '一张只讲一个观点'}` : '原子卡片 + 带理由的链接');
+  const noteList = notes.length ? [h('div', { class: 'zsub' }, '笔记'), h('div', { class: 'feed' }, notes.map(entryCard))] : [];
+  if (!cards.length && !undigested.length) {
+    return [section('知识', null, more), h('div', { class: 'zk-empty' },
+      h('b', {}, '卡片盒还空着'),
+      h('p', {}, '整理论文、踩坑这类知识时，小小蜗会提议拆出 0–3 张卡片：每张一句完整的观点，带着「为什么连到另一张」的理由，你勾选后才入库。也可以直接丢一句你自己的想法进来，它会被当成一张卡片。')), ...noteList];
+  }
+  return [section('知识', null, more),
+    cards.length ? h('div', { class: 'zk' }, cards.slice(0, 6).map((c) => {
+      const out = c.relations?.length ?? 0, inn = linksOf(c.id);
+      return h('a', { class: 'zkc', href: `#/entry/${c.id}` },
+        h('div', { class: 'zt' }, c.title),
+        h('div', { class: 'zm' }, h('span', {}, `→ ${out}`), h('span', {}, `← ${inn}`), c.fields?.source ? h('span', { class: 'src' }, `出自 ${c.fields.source}`) : null));
+    })) : null,
+    undigested.length ? h('div', { class: 'digest' }, h('span', { class: 'dh' }, '待消化'),
+      undigested.map((e) => h('a', { href: `#/entry/${e.id}` }, e.title)), h('small', {}, '存了两周还没拆出卡片，有空用自己的话写一句。')) : null,
+    ...noteList];
 }
 
 /** 顶栏右侧：连续记录了几天（今天还没记就从昨天往回数） */
@@ -199,13 +248,13 @@ function inboxItem({ raw, draft }) {
     draft?.questions?.length ? h('div', { class: 'ask' }, draft.questions.slice(0, 2).map((q) => h('span', {}, q.length > 18 ? `${q.slice(0, 18)}…` : q))) : null);
 }
 
-const entryCard = (e) => h('a', { class: 'f', href: `#/entry/${e.id}` },
-  e.images?.length ? h('div', { class: 'shot' }, h('img', { src: imgUrl(e.rawId, e.images[0]), alt: '', loading: 'lazy' })) : null,
+const entryCard = (e) => h('a', { class: `f ${e.images?.length && e.scene !== 'card' ? 'has-thumb' : ''}`, href: `#/entry/${e.id}`, style: `--c:${sceneOf(e.scene)?.color ?? 'var(--line)'}` },
+  e.images?.length && e.scene !== 'card' ? h('div', { class: 'thumb' }, h('img', { src: imgUrl(e.rawId, e.images[0]), alt: '', loading: 'lazy' })) : null,
   h('div', { class: 'body' },
     sceneTag(e.scene, e.private ? '私密' : ''),
     h('div', { class: `t ${e.scene === 'card' ? 'idea' : ''}` }, e.title),
     e.oneLine && e.oneLine !== e.title ? h('div', { class: 'd' }, e.oneLine) : e.summary ? h('div', { class: 'd' }, e.summary) : null,
-    h('div', { class: 'm' }, h('span', {}, e.date ? e.date.slice(5).replace('-', '.') : fmt(e.id)),
+    h('div', { class: 'm' }, h('span', {}, isKnowledge(e) ? occurred(e).slice(5, 10).replace('-', '.') : occurred(e).slice(11) || '全天'),
       e.fields?.rating ? h('span', { class: 'starv' }, stars(e.fields.rating)) : null,
       e.fields?.status ? h('span', {}, e.fields.status) : e.fields?.solved ? h('span', {}, e.fields.solved) : null,
       e.tags.slice(0, 2).map((t) => h('span', { class: 'chip' }, t)))));
@@ -257,7 +306,8 @@ function draftForm(d, opts = {}) {
   let carried = { ...(d.fields ?? {}) };
   const title = h('input', { class: 'field title-field', value: d.title, 'aria-label': '标题' });
   const oneLine = h('input', { class: 'field', value: d.oneLine ?? '', placeholder: '卡片上显示的一句话', 'aria-label': '一句话' });
-  const date = h('input', { class: 'field', type: 'date', value: d.date ?? '', 'aria-label': '日期' });
+  const when = d.date || (d.createdAt ? localStampOf(d.createdAt) : '');
+  const date = h('input', { class: 'field', type: 'datetime-local', value: when.length === 10 ? `${when}T00:00` : when, 'aria-label': '发生时间' });
   const summary = h('textarea', { class: 'field', rows: 3, 'aria-label': '说明' }, d.summary);
   const points = h('textarea', { class: 'field', rows: 4, 'aria-label': '要点' }, d.keyPoints.join('\n'));
   const tags = h('input', { class: 'field', value: d.tags.join('，'), 'aria-label': '标签' });
@@ -282,7 +332,7 @@ function draftForm(d, opts = {}) {
       h('label', { class: 'lab' }, '标题'), title,
       h('label', { class: 'lab' }, '一句话'), oneLine,
       ...rest.flatMap(({ f, el }) => [h('label', { class: 'lab' }, f.label), el]),
-      h('label', { class: 'lab' }, '日期'), date,
+      h('label', { class: 'lab' }, '发生时间', h('small', { class: 'labhint' }, '默认是记录的时间，可以改')), date,
       h('details', { class: 'more-fields', open: !scene.fields.length || undefined },
         h('summary', {}, '说明、要点、标签'),
         h('label', { class: 'lab' }, '说明'), summary,
@@ -407,7 +457,7 @@ async function renderEntry(id) {
         h('div', { class: 'kicker' }, sceneTag(entry.scene), entry.private ? h('span', {}, '私密') : null, entry.tags.map((t) => h('span', { class: 'chip' }, t))),
         h('h1', {}, entry.title),
         entry.oneLine || entry.summary ? h('p', { class: 'deck' }, entry.oneLine || entry.summary) : null,
-        h('div', { class: 'meta' }, entry.date ? `${entry.date} · ` : '', `入库 ${fmt(entry.id)}`, entry.private ? ' · 不在 GitHub 备份里' : '')),
+        h('div', { class: 'meta' }, `发生于 ${occurred(entry).replace('T', ' ')}`, entry.private ? ' · 不在 GitHub 备份里' : '')),
       short.length ? h('dl', { class: 'facts' }, short.flatMap((f) => [h('dt', {}, f.label), h('dd', {}, fieldView(f, entry.fields[f.key]))])) : null,
       long.flatMap((f) => [section(f.label), fieldView(f, entry.fields[f.key])]),
       entry.oneLine && entry.summary ? [section('说明'), h('p', {}, entry.summary)] : null,

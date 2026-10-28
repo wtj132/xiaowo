@@ -94,3 +94,6 @@ export function describeFields(scene: Scene): string {
 let repo: SceneSet | null = null;
 /** 仓库里的 scenes/（与 src/、dist/ 同级），读一次缓存 */
 export const repoScenes = () => (repo ??= loadScenes(fileURLToPath(new URL('../scenes', import.meta.url))));
+
+/** 知识类场景整理时提议拆出卡片（卡片本身除外） */
+export const proposesCards = (scene: Scene) => scene.cards === true || (scene.group === 'knowledge' && scene.id !== 'card');

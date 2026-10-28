@@ -5,6 +5,7 @@ import { extname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import type { TripData, TripRecord } from './trips.js';
+import { localStamp } from './time.js';
 
 const sh = promisify(execFile);
 
@@ -228,7 +229,8 @@ export class Store {
       if (!rec || !raw) throw new Error(`草稿不存在: ${draftId}`);
       const { cards: _proposed, sceneAlt: _alt, ...kept } = edited;
       const now = new Date().toISOString();
-      const entry: Entry = { ...kept, id: draftId, rawId: raw.id, createdAt: now, rawText: raw.text, ocrText: raw.ocrText, ...(raw.private ? { private: true } : {}) };
+      // 没写发生时间就用记录时间
+      const entry: Entry = { ...kept, date: kept.date || localStamp(raw.createdAt), id: draftId, rawId: raw.id, createdAt: now, rawText: raw.text, ocrText: raw.ocrText, ...(raw.private ? { private: true } : {}) };
       await fs.mkdir(this.p('entries'), { recursive: true });
       await fs.writeFile(this.p('entries', `${entry.id}.md`), this.renderEntry(entry));
       // 拆出的卡片：各自成条，链回出处

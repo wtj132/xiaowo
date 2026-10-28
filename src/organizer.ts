@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import type { DshClient } from './dsh.js';
 import type { SearchClient } from './search.js';
-import { cleanFields, describeFields, repoScenes, type Scene, type SceneSet } from './scenes.js';
+import { cleanFields, describeFields, proposesCards, repoScenes, type Scene, type SceneSet } from './scenes.js';
+import { localStamp, OCCURRED_RE } from './time.js';
 import type { Draft, Link, ProposedCard, Raw, Store } from './store.js';
 
 export interface OrganizerDeps {
@@ -80,7 +81,7 @@ export async function localDraft(raw: Raw, deps: OrganizerDeps): Promise<Organiz
   await readImages(raw, deps, []);
   const firstLine = raw.text.split('\n').map((l) => l.trim()).find(Boolean);
   const title = (firstLine ?? raw.urls[0] ?? '私密记录').slice(0, 40);
-  return { draft: { title, summary: '', keyPoints: [], tags: [], sourceUrls: raw.urls, scene: 'note', fields: {} }, questions: [] };
+  return { draft: { title, summary: '', keyPoints: [], tags: [], sourceUrls: raw.urls, scene: 'note', fields: {}, date: localStamp(raw.createdAt) }, questions: [] };
 }
 
 export async function organize(raw: Raw, deps: OrganizerDeps, note?: string): Promise<OrganizeResult> {
@@ -133,16 +134,21 @@ export async function organize(raw: Raw, deps: OrganizerDeps, note?: string): Pr
     `\n### ${scene.name}的整理要求\n${scene.guide}`,
     scene.enrich ? `\n联网与补充：${scene.enrich}` : '',
     `\n### 字段（放进 fields）\n${describeFields(scene)}`,
+    proposesCards(scene) ? `\n### 拆卡片（卡片盒）\n这是一条知识类的笔记。另外提议 0–3 张**卡片**（cards），每张只讲一个能脱离这条笔记也读得懂的观点：
+- title 是一句完整的话（"用历史轨迹回放评测自进化 agent，避免自己出题自己考"），不是主题词（"agent 评测"）。
+- draft 是一两句初稿，主人可能会用自己的话改写。
+- links：从「已有条目」里挑 0–3 张真正相关的，type 取 对比/前身/用到/支持/反驳/同主题 之一，reason 写一句为什么相关。没有就给空数组，不要硬凑。
+拆不出完整观点时 cards 给空数组；不要为了凑数把要点一条条变成卡片。` : '',
     `\n### 输出\n只输出一个 JSON 对象，不要输出别的文字。字段：
 - title：标题
 - oneLine：一句话（卡片上显示，20 字左右）
-- date：这件事发生的日期 YYYY-MM-DD，原文没说就给空字符串
+- date：这件事发生的时间，YYYY-MM-DD 或 YYYY-MM-DDTHH:mm；原文明确说了（"昨晚""上周六"，今天是 ${localStamp(raw.createdAt).slice(0, 10)}）才填，没说就给空字符串，默认用记录时间
 - summary：一段话说明
 - keyPoints：字符串数组，场景字段放不下的关键信息
 - tags：3–6 个标签
 - fields：按上面的字段
 - questions：字符串数组。只问字段之外、答案会明显改变记录又实在推断不出来的事，最多 2 个，一句话就能答；能从原文推断的不要问。${scene.ask.length ? `「${scene.ask.map((k) => scene.fields.find((f) => f.key === k)?.label ?? k).join('」「')}」会由主人在表单里直接填，不要再问，推断不出就留空。` : ''}
-${scene.cards ? '- cards：数组，每项 {title, draft, links:[{to, type, reason}]}，按整理要求提议拆出的卡片\n' : ''}${scene.id === 'card' ? '- links：数组，每项 {to, type, reason}，to 是已有条目的 id\n' : ''}- 如与「已有条目」中某条是同一件事，加 possibleDuplicateOf，值为那条的 id
+${proposesCards(scene) ? '- cards：数组，每项 {title, draft, links:[{to, type, reason}]}，见「拆卡片」\n' : ''}${scene.id === 'card' ? '- links：数组，每项 {to, type, reason}，to 是已有条目的 id\n' : ''}- 如与「已有条目」中某条是同一件事，加 possibleDuplicateOf，值为那条的 id
 无论如何都要尽力给出完整草稿，不能只提问。不要编造材料里没有的事实。`,
     note ? `\n主人对这次整理的补充/要求：${note}` : '',
     `\n${fence('已有条目', existing || '（无）')}`,
@@ -154,8 +160,8 @@ ${scene.cards ? '- cards：数组，每项 {title, draft, links:[{to, type, reas
 
   const ids = new Set(entries.map((e) => e.id));
   const fields = cleanFields(scene, parsed.fields);
-  const date = typeof parsed.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) ? parsed.date
-    : typeof fields.date === 'string' ? fields.date : '';
+  // 发生时间：原文说了就用，没说就是记录时间
+  const date = typeof parsed.date === 'string' && OCCURRED_RE.test(parsed.date) ? parsed.date : localStamp(raw.createdAt);
   const draft: Draft = {
     title: parsed.title,
     summary: typeof parsed.summary === 'string' ? parsed.summary : '',
@@ -165,10 +171,10 @@ ${scene.cards ? '- cards：数组，每项 {title, draft, links:[{to, type, reas
     scene: scene.id,
     ...(alternatives.length ? { sceneAlt: alternatives } : {}),
     ...(typeof parsed.oneLine === 'string' && parsed.oneLine.trim() ? { oneLine: parsed.oneLine.trim() } : {}),
-    ...(date ? { date } : {}),
+    date,
     fields,
     ...(scene.id === 'card' ? { relations: links(parsed.links, ids) } : {}),
-    ...(scene.cards ? { cards: proposedCards(parsed.cards, ids) } : {}),
+    ...(proposesCards(scene) ? { cards: proposedCards(parsed.cards, ids) } : {}),
     ...(typeof parsed.possibleDuplicateOf === 'string' && ids.has(parsed.possibleDuplicateOf) ? { possibleDuplicateOf: parsed.possibleDuplicateOf } : {}),
   };
   const questions = [...new Set([...strings(parsed.questions).slice(0, 2), ...extraQuestions])].slice(0, 4);
