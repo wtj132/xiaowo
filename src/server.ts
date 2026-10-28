@@ -41,15 +41,22 @@ export async function createApp(cfg: Config, deps?: Partial<AppDeps>) {
   return { app, queue, store, close };
 }
 
-/** 本地界面调试：不调用 DeepSeek，用原文生成一份假草稿。 */
+/** 本地界面调试：不调用 DeepSeek，按关键词假装认场景、填字段。 */
 function fakeOrganizerDeps(): Partial<AppDeps> {
   const dsh = new FakeDsh((prompt) => {
-    const text = prompt.split('## 用户原文\n')[1]?.split('\n')[0] ?? '随手记';
-    return JSON.stringify({
-      title: text.slice(0, 20) || '未命名', summary: `（假数据）${text}`,
-      keyPoints: ['要点一', '要点二'], tags: ['示例'],
-      questions: text.length < 10 ? ['这是什么？能用一句话说明吗？'] : [],
-    });
+    const text = prompt.match(/<<<资料开始:用户原文>>>\n([\s\S]*?)\n<<<资料结束/)?.[1] ?? '随手记';
+    const guess = /《|电影|剧|二刷/.test(text) ? 'film' : /书|划线|在读/.test(text) ? 'book' : /报错|坑|失败/.test(text) ? 'bug' : /论文|arxiv|paper/i.test(text) ? 'paper' : 'note';
+    if (prompt.startsWith('## 识别场景')) return JSON.stringify({ scene: guess, confidence: guess === 'note' ? 0.4 : 0.9, alternatives: ['card'] });
+    const scene = prompt.match(/整理一条「(.+?)」/)?.[1];
+    const base = { title: text.slice(0, 20) || '未命名', oneLine: text.slice(0, 30), summary: `（假数据）${text}`, keyPoints: [], tags: ['示例'] };
+    if (scene === '影视') return JSON.stringify({ ...base, title: text.match(/《(.+?)》/)?.[1] ?? base.title, fields: { work: text.match(/《(.+?)》/)?.[1] ?? '某片', year: 2000, creator: '某导演', status: '看完' }, questions: [] });
+    if (scene === '踩坑') return JSON.stringify({ ...base, fields: { symptom: text, stack: 'Node' }, questions: [] });
+    if (scene === '论文') {
+      const old = prompt.match(/^- (\d{8}-\d{6}-[0-9a-f]{8}): /m)?.[1];
+      return JSON.stringify({ ...base, fields: { problem: '（假数据）要解决的问题', method: '（假数据）方法' }, questions: ['你为什么存它？'],
+        cards: [{ title: '（假数据）一个可以脱离论文读懂的观点', draft: '一两句初稿', links: old ? [{ to: old, type: '同主题', reason: '（假数据）都在讲评测' }] : [] }] });
+    }
+    return JSON.stringify({ ...base, keyPoints: ['要点一', '要点二'], questions: text.length < 10 ? ['这是什么？能用一句话说明吗？'] : [] });
   });
   return { dsh, search: new FakeSearch(), ocr: async () => '' };
 }

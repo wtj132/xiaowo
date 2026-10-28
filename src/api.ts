@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { bodyLimit } from 'hono/body-limit';
 import { RevConflict, type Draft, type Store } from './store.js';
 import { parseTripImport, summarize } from './trips.js';
+import { cleanFields, repoScenes } from './scenes.js';
 
 export interface ApiDeps {
   store: Store;
@@ -31,13 +32,28 @@ function sniffImage(b: Buffer): 'png' | 'jpg' | 'webp' | 'heic' | null {
 }
 
 const isStrings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+const isLink = (l: any) => l && typeof l.to === 'string' && ID_RE.test(l.to) && typeof l.type === 'string' && typeof l.reason === 'string';
 function parseDraft(v: any): Draft | null {
   if (!v || typeof v.title !== 'string' || !v.title.trim() || typeof v.summary !== 'string') return null;
   if (!isStrings(v.keyPoints) || !isStrings(v.tags) || !isStrings(v.sourceUrls ?? [])) return null;
+  const scenes = repoScenes();
+  const scene = typeof v.scene === 'string' ? scenes.byId.get(v.scene) : undefined;
   return {
     title: v.title, summary: v.summary, keyPoints: v.keyPoints, tags: v.tags, sourceUrls: v.sourceUrls ?? [],
     ...(typeof v.possibleDuplicateOf === 'string' ? { possibleDuplicateOf: v.possibleDuplicateOf } : {}),
+    ...(scene ? { scene: scene.id, fields: cleanFields(scene, v.fields) } : {}),
+    ...(typeof v.oneLine === 'string' && v.oneLine.trim() ? { oneLine: v.oneLine.trim().slice(0, 120) } : {}),
+    ...(typeof v.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.date) ? { date: v.date } : {}),
+    ...(Array.isArray(v.relations) ? { relations: v.relations.filter(isLink).slice(0, 12) } : {}),
   };
+}
+/** 草稿页勾选要留下的卡片 */
+function parseCards(v: unknown) {
+  if (!Array.isArray(v)) return [];
+  return v.filter((c: any) => c && typeof c.title === 'string' && c.title.trim()).slice(0, 5).map((c: any) => ({
+    title: c.title.trim(), idea: typeof c.idea === 'string' ? c.idea.trim() : '',
+    links: Array.isArray(c.links) ? c.links.filter(isLink).slice(0, 5) : [],
+  }));
 }
 
 const asArray = (v: unknown): unknown[] => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
@@ -86,7 +102,13 @@ export function createApi(deps: ApiDeps) {
 
   api.get('/api/inbox', async (c) => {
     const raws = (await store.listRaw()).filter((r) => OPEN.includes(r.status));
-    const items = await Promise.all(raws.map(async (raw) => ({ raw, draft: (await store.getDraft(raw.id)) ?? undefined })));
+    const items = await Promise.all(raws.map(async (raw) => {
+      const draft = await store.getDraft(raw.id);
+      // 提议卡片链到的已有条目：附上标题，草稿页直接显示
+      const to = [...new Set((draft?.draft?.cards ?? []).flatMap((c) => c.links.map((l) => l.to)))];
+      const titles = Object.fromEntries(await Promise.all(to.map(async (id) => [id, (await store.getEntry(id))?.title ?? '（已删除）'])));
+      return { raw, draft: draft ? { ...draft, titles } : undefined };
+    }));
     const rank = (s: string) => (s === 'drafted' || s === 'failed' ? 0 : 1);
     items.sort((a, b) => rank(a.raw.status) - rank(b.raw.status) || b.raw.id.localeCompare(a.raw.id));
     return c.json({ items });
@@ -103,9 +125,10 @@ export function createApi(deps: ApiDeps) {
     if (!rec) return c.json({ error: '草稿不存在' }, 404);
     const rawNow = await store.getRaw(rec.rawId);
     if (rec.status !== 'pending' || rawNow?.status === 'organizing') return c.json({ error: '这条草稿现在不能确认（可能正在重做）' }, 409);
-    const draft = parseDraft((await c.req.json().catch(() => ({}))).draft);
+    const body = (await c.req.json().catch(() => null)) ?? {};
+    const draft = parseDraft(body.draft);
     if (!draft) return c.json({ error: '草稿格式不对' }, 400);
-    return c.json(await store.confirmDraft(id, draft));
+    return c.json(await store.confirmDraft(id, draft, parseCards(body.cards)));
   });
 
   api.post('/api/drafts/:id/discard', async (c) => {
@@ -147,7 +170,28 @@ export function createApi(deps: ApiDeps) {
     const entry = ID_RE.test(c.req.param('id')) ? await store.getEntry(c.req.param('id')) : null;
     if (!entry) return c.json({ error: '条目不存在' }, 404);
     const raw = await store.getRaw(entry.rawId);
-    return c.json({ entry, images: raw?.images ?? [] });
+    // 反向链接：哪些条目链到了这里
+    const backlinks = (await store.listEntries()).flatMap((e) => (e.relations ?? []).filter((l) => l.to === entry.id)
+      .map((l) => ({ id: e.id, title: e.title, scene: e.scene ?? 'note', type: l.type, reason: l.reason })));
+    const titles = Object.fromEntries((await Promise.all((entry.relations ?? []).map(async (l) => [l.to, (await store.getEntry(l.to))?.title ?? '（已删除）']))));
+    return c.json({ entry, images: entry.scene === 'card' ? [] : raw?.images ?? [], backlinks, titles });
+  });
+
+  /** 让小小蜗按场景重新整理一条已入库的条目；确认前原条目不变 */
+  api.post('/api/entries/:id/rescene', async (c) => {
+    const id = c.req.param('id');
+    const entry = ID_RE.test(id) ? await store.getEntry(id) : null;
+    if (!entry || entry.rawId !== id) return c.json({ error: '这条不能重新整理' }, 404);
+    const raw = await store.getRaw(id);
+    if (!raw || raw.private) return c.json({ error: '私密条目不会交给助手' }, 409);
+    await store.updateRaw(id, { status: 'saved' });
+    enqueue(id);
+    return c.json({ ok: true }, 202);
+  });
+
+  api.get('/api/scenes', (c) => {
+    const s = repoScenes();
+    return c.json({ scenes: s.list.map(({ guide: _g, enrich: _e, detect: _d, ...pub }) => pub) });
   });
 
   api.put('/api/entries/:id', async (c) => {

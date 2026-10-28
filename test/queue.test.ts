@@ -7,11 +7,16 @@ import type { OrganizerDeps } from '../src/organizer.js';
 import { Queue } from '../src/queue.js';
 import { FakeSearch } from '../src/search.js';
 import { Store } from '../src/store.js';
+import { loadScenes, type SceneSet } from '../src/scenes.js';
+/** 只有兜底场景：整理只调一次模型，老测试的调用次数不变 */
+const ALL = loadScenes(new URL('../scenes', import.meta.url).pathname);
+const NOTE_ONLY: SceneSet = { ...ALL, list: [ALL.fallback], byId: new Map([['note', ALL.fallback]]) };
+
 
 const good = JSON.stringify({ title: 'T', summary: 'S', keyPoints: ['k'], tags: ['t'], questions: [] });
 let store: Store;
 const body = { text: 'abc'.repeat(200), urls: [] as string[], images: [] as { name: string; data: Buffer }[] };
-const mkDeps = (dsh: FakeDsh): OrganizerDeps => ({ store, dsh, search: new FakeSearch(), ocr: async () => '' });
+const mkDeps = (dsh: FakeDsh): OrganizerDeps => ({ store, dsh, search: new FakeSearch(), ocr: async () => '', scenes: NOTE_ONLY });
 beforeEach(() => { store = new Store(mkdtempSync(join(tmpdir(), 'q-'))); });
 
 describe('Queue', () => {

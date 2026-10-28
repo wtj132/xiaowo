@@ -201,3 +201,42 @@ pre { white-space: pre-wrap; word-break: break-word; }
   .actions { bottom: calc(68px + env(safe-area-inset-bottom)); }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* ---------------------------------------------------------------- 场景表单 */
+.scene-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 6px; }
+.lab-inline { font: 600 12px var(--sans); color: var(--muted); margin-right: 4px; }
+.chipbtn { min-height: 32px; height: 32px; padding: 0 12px; border-radius: 99px; font-size: 13px; background: transparent; color: var(--ink2); }
+.chipbtn.on { background: color-mix(in srgb, var(--c) 22%, transparent); border-color: var(--c); color: var(--ink); }
+.chipsel { height: 32px; border-radius: 99px; border: 1px dashed var(--line); background: transparent; color: var(--muted); padding: 0 10px; font: 13px var(--sans); }
+.askbox { margin: 14px 0 4px; padding: 6px 16px 16px; border-radius: 16px; background: color-mix(in srgb, var(--sun) 8%, var(--card)); border: 1px solid color-mix(in srgb, var(--sun) 35%, var(--line)); }
+.askhead { font: 600 13px var(--sans); color: var(--sun); margin-top: 10px; }
+.askrow .lab { margin-top: 12px; }
+.stars { display: flex; gap: 2px; }
+.stars button { min-height: 40px; width: 40px; padding: 0; border: 0; background: transparent; color: #4a4754; font-size: 24px; }
+.stars button.on { color: var(--sun); }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button { min-height: 36px; height: 36px; border-radius: 10px; font-size: 13px; background: var(--card); color: var(--ink2); }
+.seg button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.more-fields { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 10px; }
+.more-fields summary, details.source summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
+details.source[open] summary { margin-bottom: 6px; }
+.sub { color: var(--muted); font-size: 13px; margin: -4px 0 10px; }
+.cardprops { display: grid; gap: 12px; }
+.cardprop { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--mint); border-radius: 14px; padding: 12px 14px; display: grid; gap: 8px; }
+.cardprop:has(input[type=checkbox]:not(:checked)) { opacity: .5; }
+.pickrow { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink2); cursor: pointer; }
+.pickrow input { accent-color: var(--mint); width: 16px; height: 16px; margin: 0; }
+.linklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.linklist li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.linklist b { font-size: 12px; color: var(--mint); font-weight: 600; margin-right: 4px; }
+.linklist a { color: var(--ink); font-weight: 600; }
+.linklist small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+/* 条目页的字段 */
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; margin: 18px 0 4px; padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+.facts dt { color: var(--muted); font-size: 13px; }
+.facts dd { margin: 0; }
+.starv { color: var(--sun); letter-spacing: 1px; }
+.flist { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.fl { white-space: pre-wrap; }
+.f .t.idea { font: 600 17px/1.55 var(--serif); }

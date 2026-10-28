@@ -19,9 +19,22 @@ export interface Raw {
   /** 私密：不发给助手整理，文件不进 git（因此也不进 GitHub 备份） */
   private?: boolean;
 }
+/** 带类型、带理由的链接（卡片盒） */
+export interface Link { to: string; type: string; reason: string }
+/** 整理时提议拆出的卡片；主人勾选后才入库 */
+export interface ProposedCard { title: string; draft: string; links: Link[] }
 export interface Draft {
   title: string; summary: string; keyPoints: string[]; tags: string[];
   sourceUrls: string[]; possibleDuplicateOf?: string;
+  /** 场景 id（scenes/<id>.md）；旧条目没有，视为 note */
+  scene?: string; sceneAlt?: string[];
+  /** 卡片上的一句话 */
+  oneLine?: string;
+  /** 这件事发生的日期，不同于入库时间 */
+  date?: string;
+  fields?: Record<string, unknown>;
+  relations?: Link[];
+  cards?: ProposedCard[];
 }
 export interface DraftRecord {
   id: string; rawId: string; version: number; draft: Draft | null;
@@ -162,6 +175,11 @@ export class Store {
       `createdAt: ${e.createdAt}`,
       `rawId: ${e.rawId}`,
       ...(e.private ? ['private: true'] : []),
+      ...(e.scene ? [`scene: ${e.scene}`] : []),
+      ...(e.oneLine ? [`oneLine: ${oneLine(e.oneLine)}`] : []),
+      ...(e.date ? [`date: ${e.date}`] : []),
+      ...(e.fields && Object.keys(e.fields).length ? [`fields: ${JSON.stringify(e.fields)}`] : []),
+      ...(e.relations?.length ? [`relations: ${JSON.stringify(e.relations)}`] : []),
       ...(e.possibleDuplicateOf ? [`duplicateOf: ${oneLine(e.possibleDuplicateOf)}`] : []),
       '---',
       '',
@@ -195,20 +213,40 @@ export class Store {
       rawText, ...(ocr ? { ocrText: ocr } : {}),
       ...(meta.duplicateOf ? { possibleDuplicateOf: meta.duplicateOf } : {}),
       ...(meta.private === 'true' ? { private: true } : {}),
+      ...(meta.scene ? { scene: meta.scene } : {}),
+      ...(meta.oneLine ? { oneLine: meta.oneLine } : {}),
+      ...(meta.date ? { date: meta.date } : {}),
+      ...(meta.fields ? { fields: JSON.parse(meta.fields) } : {}),
+      ...(meta.relations ? { relations: JSON.parse(meta.relations) } : {}),
     };
   }
 
-  async confirmDraft(draftId: string, edited: Draft): Promise<{ entryId: string }> {
+  async confirmDraft(draftId: string, edited: Draft, cards: { title: string; idea: string; links: Link[] }[] = []): Promise<{ entryId: string; cardIds: string[] }> {
     return this.write(`入库: ${draftId}`, async () => {
       const rec = await this.getDraft(draftId);
       const raw = rec && (await this.getRaw(rec.rawId));
       if (!rec || !raw) throw new Error(`草稿不存在: ${draftId}`);
-      const entry: Entry = { ...edited, id: draftId, rawId: raw.id, createdAt: new Date().toISOString(), rawText: raw.text, ocrText: raw.ocrText, ...(raw.private ? { private: true } : {}) };
+      const { cards: _proposed, sceneAlt: _alt, ...kept } = edited;
+      const now = new Date().toISOString();
+      const entry: Entry = { ...kept, id: draftId, rawId: raw.id, createdAt: now, rawText: raw.text, ocrText: raw.ocrText, ...(raw.private ? { private: true } : {}) };
       await fs.mkdir(this.p('entries'), { recursive: true });
       await fs.writeFile(this.p('entries', `${entry.id}.md`), this.renderEntry(entry));
+      // 拆出的卡片：各自成条，链回出处
+      const cardIds: string[] = [];
+      for (const c of cards) {
+        const id = this.newId();
+        const card: Entry = {
+          id, rawId: raw.id, createdAt: now, rawText: '', title: c.title, summary: c.idea, keyPoints: [], tags: entry.tags.slice(0, 3),
+          sourceUrls: [], scene: 'card', oneLine: c.title, date: entry.date, fields: { idea: c.idea, source: entry.title },
+          relations: [{ to: entry.id, type: '出处', reason: '从这条文献笔记里拆出来' }, ...c.links],
+          ...(raw.private ? { private: true } : {}),
+        };
+        await fs.writeFile(this.p('entries', `${id}.md`), this.renderEntry(card));
+        cardIds.push(id);
+      }
       await fs.writeFile(this.p('drafts', `${draftId}.json`), JSON.stringify({ ...rec, status: 'confirmed' }, null, 2));
       await fs.writeFile(this.p('inbox', raw.id, 'raw.json'), JSON.stringify({ ...raw, status: 'confirmed' }, null, 2));
-      return { entryId: entry.id };
+      return { entryId: entry.id, cardIds };
     });
   }
 
